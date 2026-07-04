@@ -43,7 +43,8 @@
     tempPetEdit: {},
     pets: [],
     scans: [],
-    selectedPetId: ""
+    selectedPetId: "",
+    qrPreview: null
   };
 
   const app = document.getElementById("app");
@@ -54,6 +55,25 @@
     '"': "&quot;",
     "'": "&#39;"
   }[char]));
+
+  const normalizePetPhoto = (value) => {
+    const photo = String(value || "").trim();
+    if (!photo) return "";
+
+    const lowerPhoto = photo.toLowerCase();
+    const blockedPhotoFragments = [
+      "assets/images/logo.png",
+      "/assets/images/logo.png",
+      "assets/images/horlogo.png",
+      "/assets/images/horlogo.png"
+    ];
+
+    if (blockedPhotoFragments.some((fragment) => lowerPhoto.includes(fragment))) {
+      return "";
+    }
+
+    return photo;
+  };
 
   const resetSession = () => {
     localStorage.removeItem("pettag_token");
@@ -91,7 +111,7 @@
     name: String(pet.name || "").trim(),
     type: String(pet.type || "").trim(),
     breed: String(pet.breed || "").trim(),
-    photo: String(pet.photo || "").trim(),
+    photo: normalizePetPhoto(pet.photo),
     district: String(pet.district || "").trim(),
     vaccines: Array.isArray(pet.vaccines) ? pet.vaccines : [],
     allergies: String(pet.allergies || "").trim(),
@@ -130,22 +150,6 @@
     }
   };
 
-  const placeholderPhoto = (name, type) => {
-    const text = encodeURIComponent(`${name} ${type}`);
-    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>
-      <defs>
-        <linearGradient id='g' x1='0' x2='1' y1='0' y2='1'>
-          <stop offset='0%' stop-color='#abc28a'/>
-          <stop offset='100%' stop-color='#5c7d46'/>
-        </linearGradient>
-      </defs>
-      <rect width='100%' height='100%' fill='url(#g)'/>
-      <text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' font-family='Segoe UI' font-size='26' fill='white'>PetTag</text>
-      <text x='50%' y='63%' dominant-baseline='middle' text-anchor='middle' font-family='Segoe UI' font-size='16' fill='white'>${text}</text>
-    </svg>`;
-    return `data:image/svg+xml;charset=UTF-8,${svg}`;
-  };
-
   const qrDataUri = (id) => {
     const size = 120;
     const c = document.createElement("canvas");
@@ -176,6 +180,21 @@
   const getPetQrUrl = (petId) => {
     if (!petId || !state.currentUser?.id) return "";
     return `${getApiUrl(`/api/public/qr/${encodeURIComponent(petId)}`)}?owner=${encodeURIComponent(state.currentUser.id)}`;
+  };
+
+  const openQrPreview = (petId) => {
+    if (!petId) return;
+    state.qrPreview = {
+      id: petId,
+      src: getPetQrUrl(petId) || qrDataUri(petId)
+    };
+    render();
+  };
+
+  const closeQrPreview = () => {
+    if (!state.qrPreview) return;
+    state.qrPreview = null;
+    render();
   };
 
   const notify = (message, type = "success") => {
@@ -254,6 +273,7 @@
       ${state.pets
         .map((pet) => {
           const edit = state.editingPetId === pet.id;
+          const hasPhoto = Boolean(pet.photo);
           return `
             <article class="card">
               <div class="status ${pet.status}">
@@ -288,7 +308,9 @@
                   `
                     : `
                     <div class="pet-head">
-                      <img class="pet-photo" src="${pet.photo || placeholderPhoto(pet.name, pet.type)}" alt="${e(pet.name)}" />
+                      ${hasPhoto
+                        ? `<img class="pet-photo" src="${pet.photo}" alt="${e(pet.name)}" />`
+                        : `<div class="pet-photo is-empty" aria-label="Sin foto"></div>`}
                       <div class="pet-copy">
                         <strong>${e(pet.name)}</strong>
                         <div class="muted">${e(pet.type)} · ${e(pet.breed)}</div>
@@ -309,7 +331,13 @@
                   : `
                     <div class="qr-strip">
                       <div class="qr-meta">
-                        <img src="${getPetQrUrl(pet.id) || qrDataUri(pet.id)}" alt="QR ${e(pet.id)}" />
+                        <img
+                          src="${getPetQrUrl(pet.id) || qrDataUri(pet.id)}"
+                          alt="QR ${e(pet.id)}"
+                          class="qr-thumb"
+                          data-action="open-qr"
+                          data-id="${pet.id}"
+                        />
                         <div>
                           <span class="qr-title">QR ID: ${e(pet.id)}</span>
                           <span class="qr-subtitle">Vinculado</span>
@@ -427,6 +455,8 @@
       return `<section class="card"><div class="card-body"><p class="muted">No hay mascotas registradas.</p></div></section>`;
     }
 
+    const hasPhoto = Boolean(pet.photo);
+
     return `
       <section class="finder">
         <div class="finder-notice ${pet.status === "lost" ? "warn" : "ok"}">
@@ -437,9 +467,11 @@
           </div>
         </div>
         <article class="finder-card">
-          <div class="finder-hero">
-            <img src="${pet.photo || placeholderPhoto(pet.name, pet.type)}" alt="${e(pet.name)}"/>
-            <div class="finder-overlay"></div>
+          <div class="finder-hero ${hasPhoto ? "" : "is-empty"}">
+            ${hasPhoto
+              ? `<img src="${pet.photo}" alt="${e(pet.name)}"/>`
+              : `<div class="finder-empty-photo"></div>`}
+            <div class="finder-overlay ${hasPhoto ? "" : "is-hidden"}"></div>
             <div class="finder-copy">
               <span class="finder-tag">${e(pet.type)}</span>
               <h2 class="finder-name">${e(pet.name)}</h2>
@@ -484,6 +516,19 @@
     if (state.activeTab === "alerts") return renderAlerts();
     if (state.activeTab === "owner-profile") return renderProfile();
     return renderRegister();
+  };
+
+  const renderQrModal = () => {
+    if (!state.qrPreview) return "";
+    return `
+      <div class="qr-modal-layer" data-action="close-qr">
+        <div class="qr-modal" role="dialog" aria-modal="true" aria-label="QR ampliado" data-action="qr-modal">
+          <button class="secondary-btn qr-close" data-action="close-qr">Cerrar</button>
+          <img src="${state.qrPreview.src}" alt="QR ampliado ${e(state.qrPreview.id)}" class="qr-modal-image" />
+          <div class="qr-modal-id">QR ID: ${e(state.qrPreview.id)}</div>
+        </div>
+      </div>
+    `;
   };
 
   const initMap = () => {
@@ -540,7 +585,7 @@
       type: document.getElementById("edit-type").value.trim(),
       breed: document.getElementById("edit-breed").value.trim(),
       district: document.getElementById("edit-district").value.trim(),
-      photo: document.getElementById("edit-photo").value.trim(),
+      photo: normalizePetPhoto(document.getElementById("edit-photo").value),
       vaccines: document
       .getElementById("edit-vaccines")
       .value.split(",")
@@ -576,7 +621,7 @@
     const type = document.getElementById("new-type").value;
     const breed = document.getElementById("new-breed").value.trim() || "Mestizo";
     const district = document.getElementById("new-district").value.trim() || "Miraflores";
-    const photo = document.getElementById("new-photo").value.trim();
+    const photo = normalizePetPhoto(document.getElementById("new-photo").value);
     const vaccines = document
       .getElementById("new-vaccines")
       .value.split(",")
@@ -722,6 +767,20 @@
       return;
     }
 
+    if (action === "open-qr") {
+      openQrPreview(target.dataset.id);
+      return;
+    }
+
+    if (action === "close-qr") {
+      closeQrPreview();
+      return;
+    }
+
+    if (action === "qr-modal") {
+      return;
+    }
+
     if (action === "toggle-status") {
       const pet = state.pets.find((p) => p.id === target.dataset.id);
       if (!pet) return;
@@ -859,6 +918,7 @@
         ${renderSidebar()}
         ${header}
         <div class="layout-frame"><main class="panel">${renderMain()}</main></div>
+        ${renderQrModal()}
       </div>
     `;
 
@@ -870,5 +930,10 @@
   };
 
   app.addEventListener("click", onClick);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeQrPreview();
+    }
+  });
   loadDashboard();
 })();
