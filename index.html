@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="assets/images/logo.png" />
+  <title>PetTag - Inicio</title>
+  <link rel="stylesheet" href="styles/app.css" />
+</head>
+<body>
+  <main class="landing-page">
+    <section class="landing-shell">
+      <div class="landing-copy">
+        <img src="assets/images/horlogo.png" alt="PetTag" class="landing-logo" />
+        <span class="landing-kicker">Identifica. Conecta. Protege.</span>
+        <h1>Placas QR y monitoreo seguro para mascotas.</h1>
+        <p>
+          PetTag centraliza el perfil del propietario, el registro de mascotas y los reportes GPS
+          para que el rescate y el contacto sean inmediatos cuando una placa es escaneada.
+        </p>
+
+        <div class="landing-actions">
+          <a class="action-btn" href="login.html">Ingresar al panel</a>
+          <a class="secondary-btn" href="app.html">Abrir dashboard</a>
+        </div>
+
+        <div class="landing-metrics">
+          <article class="landing-metric">
+            <strong>Perfiles vivos</strong>
+            <span>Datos del propietario y sus mascotas sincronizados en un solo flujo.</span>
+          </article>
+          <article class="landing-metric">
+            <strong>QR estatico</strong>
+            <span>El collar no cambia aunque actualices la ficha medica o de contacto.</span>
+          </article>
+          <article class="landing-metric">
+            <strong>GPS contextual</strong>
+            <span>El propietario recibe ubicaciones reales cuando alguien encuentra la mascota.</span>
+          </article>
+        </div>
+      </div>
+
+      <aside class="landing-card">
+        <div class="landing-card-head">
+          <span class="service-pill"><i class="service-dot"></i><span>Servicio Activo</span></span>
+        </div>
+        <div class="landing-preview">
+          <div class="landing-preview-photo">
+            <img src="assets/images/logo.png" alt="PetTag QR" />
+          </div>
+          <div>
+            <span class="landing-preview-tag">Modo local listo</span>
+            <h2>Frontend y backend ya comparten la misma base operativa.</h2>
+            <p>
+              El acceso de login, el panel del propietario y los endpoints de mascotas, perfiles y
+              escaneos ya quedaron alineados para trabajar sobre el mismo backend.
+            </p>
+          </div>
+        </div>
+
+        <div class="landing-stack">
+          <div class="landing-stack-item">
+            <span>1</span>
+            <div>
+              <strong>Inicia sesion</strong>
+              <p>Accede con tu usuario de Supabase desde el panel protegido.</p>
+            </div>
+          </div>
+          <div class="landing-stack-item">
+            <span>2</span>
+            <div>
+              <strong>Registra la mascota</strong>
+              <p>Crea la ficha tecnica, genera el QR y administra su estado.</p>
+            </div>
+          </div>
+          <div class="landing-stack-item">
+            <span>3</span>
+            <div>
+              <strong>Recibe escaneos</strong>
+              <p>Monitorea ubicaciones y alertas desde el mismo dashboard.</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+  <script>
+    if (localStorage.getItem("pettag_token")) {
+      window.location.replace("app.html");
+    }
+  </script>
+</body>
+</html>

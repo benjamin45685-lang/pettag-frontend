@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="assets/images/logo.png" />
+  <title>PetTag - Panel</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="styles/app.css" />
+  <script>
+    if (!localStorage.getItem("pettag_token")) {
+      window.location.replace("login.html");
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
