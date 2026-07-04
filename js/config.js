@@ -14,7 +14,7 @@
   };
   // Nombre del servicio backend en Render (sin https ni dominio).
   // Cambialo si tu servicio en Render tiene otro nombre.
-  const RENDER_BACKEND_SERVICE = "pettag-backend";
+  const RENDER_BACKEND_SERVICE = "pettag-nnj4";
 
   const hostname = String(window.location.hostname || "").toLowerCase();
   const isLocal = hostname === "localhost" || hostname === "::1" || isPrivateIpv4Host(hostname);
