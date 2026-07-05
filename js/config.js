@@ -34,6 +34,7 @@
   }
 
   window.PETTAG_CONFIG = {
-    API_BASE_URL: normalize(apiBase)
+    API_BASE_URL: normalize(apiBase),
+    TIME_ZONE: "America/Lima"
   };
 })();

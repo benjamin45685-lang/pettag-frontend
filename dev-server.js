@@ -77,6 +77,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if ((req.url || '').startsWith('/s/')) {
+    const scanPage = path.join(rootDir, 'public-scan.html');
+    fs.readFile(scanPage, (readError, data) => {
+      if (readError) {
+        sendResponse(res, 404, 'Not found', 'text/plain; charset=utf-8');
+        return;
+      }
+
+      sendResponse(res, 200, data, contentTypes['.html']);
+    });
+    return;
+  }
+
   const relativePath = sanitizePath(req.url || '/');
   const absolutePath = path.join(rootDir, relativePath);
 

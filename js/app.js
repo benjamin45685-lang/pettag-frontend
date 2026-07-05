@@ -1,6 +1,7 @@
 (() => {
   const token = localStorage.getItem("pettag_token") || "";
   const configuredApiBase = String(window.PETTAG_CONFIG?.API_BASE_URL || "").trim();
+  const configuredTimeZone = String(window.PETTAG_CONFIG?.TIME_ZONE || "America/Lima").trim() || "America/Lima";
   const apiBase = (configuredApiBase || localStorage.getItem("pettag_api_base") || "").trim().replace(/\/$/, "");
 
   if (!token) {
@@ -42,7 +43,18 @@
     },
     tempPetEdit: {},
     pets: [],
+    myPets: [],
     scans: [],
+    adminStats: {
+      totalUsers: 0,
+      pendingUsers: 0,
+      totalPets: 0,
+      lostPets: 0,
+      totalScans: 0
+    },
+    adminUsers: [],
+    adminPets: [],
+    adminScans: [],
     selectedPetId: "",
     qrPreview: null
   };
@@ -60,6 +72,10 @@
     const photo = String(value || "").trim();
     if (!photo) return "";
 
+    if (photo.startsWith("data:")) {
+      return "";
+    }
+
     const lowerPhoto = photo.toLowerCase();
     const blockedPhotoFragments = [
       "assets/images/logo.png",
@@ -73,6 +89,12 @@
     }
 
     return photo;
+  };
+
+  const isValidPhotoUrl = (value) => {
+    const photo = String(value || "").trim();
+    if (!photo) return true;
+    return /^https?:\/\//i.test(photo);
   };
 
   const resetSession = () => {
@@ -99,6 +121,10 @@
       throw new Error("Sesion expirada.");
     }
 
+    if (response.status === 413) {
+      throw new Error("La imagen es demasiado grande. Prueba con una foto mas ligera.");
+    }
+
     if (!response.ok) {
       throw new Error(data.error || "No se pudo completar la solicitud.");
     }
@@ -108,6 +134,9 @@
 
   const normalizePet = (pet) => ({
     id: String(pet.id || "").trim(),
+    ownerId: String(pet.owner_id || pet.ownerId || "").trim(),
+    ownerName: String(pet.owner?.name || pet.ownerName || "").trim(),
+    ownerDistrict: String(pet.owner?.district || pet.ownerDistrict || "").trim(),
     name: String(pet.name || "").trim(),
     type: String(pet.type || "").trim(),
     breed: String(pet.breed || "").trim(),
@@ -119,6 +148,68 @@
     status: String(pet.status || "safe").trim() || "safe"
   });
 
+  const normalizeAdminUser = (user) => ({
+    id: String(user.id || "").trim(),
+    email: String(user.email || "").trim(),
+    name: String(user.name || "").trim(),
+    phone: String(user.phone || "").trim(),
+    district: String(user.district || "").trim(),
+    role: String(user.role || "user").trim().toLowerCase() || "user",
+    approved: typeof user.approved === "boolean" ? user.approved : true,
+    petsCount: Number(user.petsCount || 0),
+    scansCount: Number(user.scansCount || 0),
+    createdAt: user.createdAt || user.created_at || null
+  });
+
+  const normalizeAdminPet = (pet) => ({
+    ...normalizePet(pet),
+    ownerEmail: String(pet.owner?.email || pet.ownerEmail || "").trim(),
+    ownerApproved: typeof pet.owner?.approved === "boolean" ? pet.owner.approved : true,
+    ownerRole: String(pet.owner?.role || pet.ownerRole || "user").trim().toLowerCase() || "user"
+  });
+
+  const formatScanTime = (createdAt) => {
+    const date = new Date(createdAt || "");
+    if (Number.isNaN(date.getTime())) return "Sin hora";
+    return date.toLocaleTimeString("es-PE", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: configuredTimeZone
+    });
+  };
+
+  const normalizeScan = (scan, petLookup = {}) => {
+    const petId = String(scan.petId || scan.pet_id || "").trim();
+    const createdAt = scan.createdAt || scan.created_at || null;
+    const fallbackPet = petLookup[petId] || null;
+
+    return {
+      id: scan.id,
+      petId,
+      petName: scan.petName || fallbackPet?.name || "Mascota",
+      createdAt,
+      timestamp: createdAt ? formatScanTime(createdAt) : (scan.timestamp || "Sin hora"),
+      district: scan.district || fallbackPet?.district || "",
+      lat: scan.lat ?? scan.latitude,
+      lon: scan.lon ?? scan.longitude,
+      device: scan.device || "",
+      isRealGps: scan.isRealGps !== false
+    };
+  };
+
+  const formatDateTime = (value) => {
+    const date = new Date(value || "");
+    if (Number.isNaN(date.getTime())) return "Sin fecha";
+    return date.toLocaleString("es-PE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: configuredTimeZone
+    });
+  };
+
   const hydrateDashboard = (payload) => {
     state.currentUser = payload.user || null;
     state.ownerProfile = {
@@ -128,20 +219,72 @@
       district: payload.profile?.district || ""
     };
     state.tempOwnerProfile = { ...state.ownerProfile };
-    state.pets = Array.isArray(payload.pets) ? payload.pets.map(normalizePet) : [];
-    state.scans = Array.isArray(payload.scans) ? payload.scans : [];
+    state.myPets = Array.isArray(payload.pets) ? payload.pets.map(normalizePet) : [];
+    state.pets = [...state.myPets];
+    const myPetsById = state.myPets.reduce((acc, pet) => {
+      acc[pet.id] = pet;
+      return acc;
+    }, {});
+    state.scans = Array.isArray(payload.scans) ? payload.scans.map((scan) => normalizeScan(scan, myPetsById)) : [];
 
-    if (!state.selectedPetId || !state.pets.some((pet) => pet.id === state.selectedPetId)) {
-      state.selectedPetId = state.pets[0]?.id || "";
+    if (!state.selectedPetId || !state.myPets.some((pet) => pet.id === state.selectedPetId)) {
+      state.selectedPetId = state.myPets[0]?.id || "";
     }
+  };
+
+  const hydrateAdminDashboard = (payload) => {
+    state.adminStats = {
+      totalUsers: Number(payload.stats?.totalUsers || 0),
+      pendingUsers: Number(payload.stats?.pendingUsers || 0),
+      totalPets: Number(payload.stats?.totalPets || 0),
+      lostPets: Number(payload.stats?.lostPets || 0),
+      totalScans: Number(payload.stats?.totalScans || 0)
+    };
+    state.adminUsers = Array.isArray(payload.users) ? payload.users.map(normalizeAdminUser) : [];
+    state.adminPets = Array.isArray(payload.pets) ? payload.pets.map(normalizeAdminPet) : [];
+    const petLookup = state.adminPets.reduce((acc, pet) => {
+      acc[pet.id] = pet;
+      return acc;
+    }, {});
+    state.adminScans = Array.isArray(payload.scans) ? payload.scans.map((scan) => normalizeScan(scan, petLookup)) : [];
+  };
+
+  const loadAdminDashboard = async () => {
+    const data = await request("/api/admin/dashboard");
+    hydrateAdminDashboard(data);
+  };
+
+  const mergePetsForVisibility = (allPets) => {
+    if (!Array.isArray(allPets)) {
+      state.pets = [...state.myPets];
+      return;
+    }
+
+    const ownById = state.myPets.reduce((acc, pet) => {
+      acc[pet.id] = pet;
+      return acc;
+    }, {});
+
+    state.pets = allPets
+      .map(normalizePet)
+      .map((pet) => ownById[pet.id] || pet);
   };
 
   const loadDashboard = async () => {
     try {
       state.loading = true;
       render();
-      const data = await request("/api/auth/me");
-      hydrateDashboard(data);
+      const meData = await request("/api/auth/me");
+
+      hydrateDashboard(meData);
+
+      if (state.currentUser?.isAdmin) {
+        await loadAdminDashboard();
+        mergePetsForVisibility(state.adminPets);
+      } else {
+        const allPetsData = await request("/api/pets").catch(() => ({ pets: [] }));
+        mergePetsForVisibility(allPetsData.pets);
+      }
     } catch (error) {
       notify(error.message || "No se pudo cargar el dashboard.", "error");
     } finally {
@@ -175,11 +318,11 @@
     return c.toDataURL("image/png");
   };
 
-  const getCurrentPet = () => state.pets.find((p) => p.id === state.selectedPetId) || state.pets[0] || null;
+  const getCurrentPet = () => state.myPets.find((p) => p.id === state.selectedPetId) || state.myPets[0] || null;
 
   const getPetQrUrl = (petId) => {
-    if (!petId || !state.currentUser?.id) return "";
-    return `${getApiUrl(`/api/public/qr/${encodeURIComponent(petId)}`)}?owner=${encodeURIComponent(state.currentUser.id)}`;
+    if (!petId) return "";
+    return `${getApiUrl(`/api/public/qr/${encodeURIComponent(petId)}`)}`;
   };
 
   const openQrPreview = (petId) => {
@@ -207,12 +350,23 @@
   };
 
   const renderSidebar = () => {
-    const links = [
-      { key: "pets", icon: "🐾", label: "Mis Mascotas", badge: state.pets.length },
+    const ownerLinks = [
+      { key: "pets", icon: "🐾", label: "Mascotas Registradas", badge: state.pets.length },
       { key: "alerts", icon: "🗺️", label: "Monitoreo GPS", badge: state.scans.length || "" },
       { key: "owner-profile", icon: "👤", label: "Mi Perfil Propietario", badge: "" },
       { key: "register", icon: "➕", label: "Inscribir Placa QR", badge: "" }
     ];
+
+    const adminLinks = state.currentUser?.isAdmin
+      ? [
+          { key: "admin-overview", icon: "🛡️", label: "Resumen Admin", badge: state.adminStats.pendingUsers || "" },
+          { key: "admin-users", icon: "✅", label: "Aprobar Usuarios", badge: state.adminStats.pendingUsers || "" },
+          { key: "admin-pets", icon: "📋", label: "Control de Mascotas", badge: state.adminStats.totalPets || "" },
+          { key: "admin-scans", icon: "📡", label: "Actividad Global", badge: state.adminStats.totalScans || "" }
+        ]
+      : [];
+
+    const links = [...ownerLinks, ...adminLinks];
 
     return `
       <div class="sidebar-layer ${state.sidebarOpen ? "is-open" : ""}">
@@ -244,9 +398,12 @@
                 .join("")}
             </div>
 
+            ${state.currentUser?.isAdmin ? `<div class="sidebar-section-title">Administracion</div><div class="muted">Solo visible para cuentas administradoras aprobadas.</div>` : ""}
+
             <div class="sidebar-section-title">Simular lectura fisica</div>
             <div class="scan-shortcuts">
               ${state.pets
+                .filter((pet) => pet.ownerId === state.currentUser?.id)
                 .map((pet) => `<button class="shortcut-btn" data-action="scan" data-id="${pet.id}">Escanear ${e(pet.name)}</button>`)
                 .join("") || `<div class="muted">Sin mascotas registradas.</div>`}
             </div>
@@ -264,27 +421,30 @@
   const renderPets = () => `
     <div class="hero">
       <div>
-        <h1 class="section-title">Mis Mascotas Vinculadas</h1>
-        <p class="section-desc">Todos los cambios de ficha se actualizan sin alterar el codigo QR impreso en la placa.</p>
+        <h1 class="section-title">Mascotas Registradas</h1>
+        <p class="section-desc">Este panel muestra todas las mascotas registradas. Solo el propietario puede editar su ficha.</p>
       </div>
       <button class="action-btn" data-action="navigate" data-view="owner-dashboard" data-tab="register">+ Nueva Mascota</button>
     </div>
     <div class="grid pet-grid">
       ${state.pets
         .map((pet) => {
+          const isOwner = pet.ownerId === state.currentUser?.id;
           const edit = state.editingPetId === pet.id;
           const hasPhoto = Boolean(pet.photo);
           return `
             <article class="card">
               <div class="status ${pet.status}">
                 <span class="status-text"><i class="status-dot"></i>${pet.status === "lost" ? "Desaparecido" : "A salvo"}</span>
-                <button class="${pet.status === "lost" ? "secondary-btn" : "danger-btn"}" data-action="toggle-status" data-id="${pet.id}">
+                ${isOwner
+                  ? `<button class="${pet.status === "lost" ? "secondary-btn" : "danger-btn"}" data-action="toggle-status" data-id="${pet.id}">
                   ${pet.status === "lost" ? "Marcar A Salvo" : "Reportar Perdida"}
-                </button>
+                </button>`
+                  : `<span class="qr-tag">Solo lectura</span>`}
               </div>
               <div class="card-body">
                 ${
-                  edit
+                  edit && isOwner
                     ? `
                     <div class="edit-panel">
                       <div class="edit-header">
@@ -297,7 +457,7 @@
                         <div><label>Raza</label><input class="field" id="edit-breed" value="${e(pet.breed)}" /></div>
                         <div><label>Distrito</label><input class="field" id="edit-district" value="${e(pet.district)}" /></div>
                       </div>
-                      <div class="row"><label>Foto URL</label><input class="field" id="edit-photo" value="${e(pet.photo)}" /></div>
+                      <div class="row"><label>Foto URL</label><input class="field" id="edit-photo" placeholder="https://..." value="${e(pet.photo)}" /></div>
                       <div class="row"><label>Vacunas (coma)</label><input class="field" id="edit-vaccines" value="${e(pet.vaccines.join(", "))}" /></div>
                       <div class="row"><label>Alergias</label><input class="field" id="edit-allergies" value="${e(pet.allergies)}" /></div>
                       <div class="row"><label>Cuidados</label><textarea id="edit-notes">${e(pet.careNotes)}</textarea></div>
@@ -314,19 +474,20 @@
                       <div class="pet-copy">
                         <strong>${e(pet.name)}</strong>
                         <div class="muted">${e(pet.type)} · ${e(pet.breed)}</div>
+                        <div class="muted">Propietario: ${e(pet.ownerName || "No disponible")}</div>
                         <div class="pet-district">📍 Distrito: ${e(pet.district)}</div>
                         <span class="pet-id">ID: ${e(pet.id)}</span>
                       </div>
                     </div>
                     <div class="actions">
-                      <button class="secondary-btn" data-action="edit-pet" data-id="${pet.id}">Editar Perfil</button>
-                      <button class="action-btn" data-action="scan" data-id="${pet.id}">Escanear Placa</button>
+                      ${isOwner ? `<button class="secondary-btn" data-action="edit-pet" data-id="${pet.id}">Editar Perfil</button>` : ""}
+                      ${isOwner ? `<button class="action-btn" data-action="scan" data-id="${pet.id}">Escanear Placa</button>` : ""}
                     </div>
                   `
                 }
               </div>
               ${
-                edit
+                edit && isOwner
                   ? ""
                   : `
                     <div class="qr-strip">
@@ -352,6 +513,165 @@
         })
         .join("")}
     </div>
+  `;
+
+  const renderAdminOverview = () => `
+    <section class="grid admin-stack">
+      <div class="hero">
+        <div>
+          <h1 class="section-title">Panel Administrativo</h1>
+          <p class="section-desc">Desde aqui puedes aprobar usuarios, supervisar mascotas y revisar la actividad global del sistema.</p>
+        </div>
+        <button class="secondary-btn" data-action="refresh-admin">Actualizar datos</button>
+      </div>
+      <div class="stats-grid">
+        <article class="stat-card"><span>Usuarios</span><strong>${state.adminStats.totalUsers}</strong><small>cuentas registradas</small></article>
+        <article class="stat-card warn"><span>Pendientes</span><strong>${state.adminStats.pendingUsers}</strong><small>requieren aprobacion</small></article>
+        <article class="stat-card"><span>Mascotas</span><strong>${state.adminStats.totalPets}</strong><small>registros activos</small></article>
+        <article class="stat-card danger"><span>Perdidas</span><strong>${state.adminStats.lostPets}</strong><small>con alerta activa</small></article>
+        <article class="stat-card"><span>Escaneos</span><strong>${state.adminStats.totalScans}</strong><small>actividad historica</small></article>
+      </div>
+      <div class="admin-grid">
+        <section class="surface-card"><div class="surface-body">
+          <h3 class="panel-title">Pendientes de aprobacion</h3>
+          ${state.adminUsers.filter((user) => !user.approved && user.role !== "admin").length
+            ? state.adminUsers
+              .filter((user) => !user.approved && user.role !== "admin")
+              .slice(0, 5)
+              .map((user) => `
+                <article class="list-item">
+                  <div>
+                    <strong>${e(user.name || user.email)}</strong>
+                    <div class="muted">${e(user.email)} · ${e(user.district || "Sin distrito")}</div>
+                  </div>
+                  <button class="action-btn compact-btn" data-action="approve-user" data-id="${user.id}" data-approved="true">Aprobar</button>
+                </article>
+              `)
+              .join("")
+            : `<div class="empty-state"><strong>No hay solicitudes pendientes.</strong><div>Las nuevas cuentas aprobadas apareceran aqui.</div></div>`}
+        </div></section>
+        <section class="surface-card"><div class="surface-body">
+          <h3 class="panel-title">Alertas activas</h3>
+          ${state.adminPets.filter((pet) => pet.status === "lost").length
+            ? state.adminPets
+              .filter((pet) => pet.status === "lost")
+              .slice(0, 5)
+              .map((pet) => `
+                <article class="list-item">
+                  <div>
+                    <strong>${e(pet.name)}</strong>
+                    <div class="muted">${e(pet.ownerName || "Sin propietario")} · ${e(pet.district || "Sin distrito")}</div>
+                  </div>
+                  <button class="secondary-btn compact-btn" data-action="admin-toggle-pet-status" data-id="${pet.id}" data-status="safe">Marcar a salvo</button>
+                </article>
+              `)
+              .join("")
+            : `<div class="empty-state"><strong>No hay mascotas reportadas como perdidas.</strong><div>El sistema no registra alertas activas.</div></div>`}
+        </div></section>
+      </div>
+    </section>
+  `;
+
+  const renderAdminUsers = () => `
+    <section class="grid admin-stack">
+      <div class="banner">
+        <div>
+          <h2 class="section-title" style="font-size:30px;">Aprobacion y Roles</h2>
+          <p class="section-desc">Aprueba cuentas nuevas y define que usuarios operan como administradores.</p>
+        </div>
+        <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
+      </div>
+      <div class="admin-table-wrap">
+        <div class="admin-table">
+          <div class="admin-table-head">
+            <span>Usuario</span><span>Estado</span><span>Rol</span><span>Mascotas</span><span>Acciones</span>
+          </div>
+          ${state.adminUsers.map((user) => `
+            <article class="admin-row">
+              <div>
+                <strong>${e(user.name || "Sin nombre")}</strong>
+                <div class="muted">${e(user.email)}</div>
+                <div class="muted">${e(user.district || "Sin distrito")}</div>
+              </div>
+              <div><span class="chip ${user.approved ? "ok" : "warn"}">${user.approved ? "Aprobado" : "Pendiente"}</span></div>
+              <div><span class="chip">${user.role === "admin" ? "Admin" : "Usuario"}</span></div>
+              <div><strong>${user.petsCount}</strong><div class="muted">${user.scansCount} escaneos</div></div>
+              <div class="inline-actions">
+                ${user.role !== "admin" ? `<button class="action-btn compact-btn" data-action="approve-user" data-id="${user.id}" data-approved="${user.approved ? "false" : "true"}">${user.approved ? "Bloquear" : "Aprobar"}</button>` : ""}
+                ${state.currentUser?.id !== user.id
+                  ? `<button class="secondary-btn compact-btn" data-action="toggle-user-role" data-id="${user.id}" data-role="${user.role === "admin" ? "user" : "admin"}">${user.role === "admin" ? "Quitar admin" : "Hacer admin"}</button>`
+                  : `<span class="muted">Tu cuenta</span>`}
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+
+  const renderAdminPets = () => `
+    <section class="grid admin-stack">
+      <div class="banner">
+        <div>
+          <h2 class="section-title" style="font-size:30px;">Control Global de Mascotas</h2>
+          <p class="section-desc">Revisa propietarios, alertas activas y elimina registros incorrectos si hace falta.</p>
+        </div>
+        <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
+      </div>
+      <div class="grid pet-grid">
+        ${state.adminPets.length
+          ? state.adminPets.map((pet) => `
+            <article class="card">
+              <div class="status ${pet.status}">
+                <span class="status-text"><i class="status-dot"></i>${pet.status === "lost" ? "Desaparecido" : "A salvo"}</span>
+                <span class="qr-tag">${e(pet.ownerName || "Sin propietario")}</span>
+              </div>
+              <div class="card-body">
+                <div class="pet-head">
+                  ${pet.photo
+                    ? `<img class="pet-photo" src="${pet.photo}" alt="${e(pet.name)}" />`
+                    : `<div class="pet-photo is-empty" aria-label="Sin foto"></div>`}
+                  <div class="pet-copy">
+                    <strong>${e(pet.name)}</strong>
+                    <div class="muted">${e(pet.type)} · ${e(pet.breed)}</div>
+                    <div class="muted">${e(pet.ownerEmail || "Sin correo")}</div>
+                    <div class="pet-district">📍 ${e(pet.district || "Sin distrito")}</div>
+                    <span class="pet-id">ID: ${e(pet.id)}</span>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button class="secondary-btn" data-action="admin-toggle-pet-status" data-id="${pet.id}" data-status="${pet.status === "lost" ? "safe" : "lost"}">${pet.status === "lost" ? "Marcar a salvo" : "Reportar perdida"}</button>
+                  <button class="danger-btn" data-action="delete-pet" data-id="${pet.id}">Eliminar</button>
+                </div>
+              </div>
+            </article>
+          `).join("")
+          : `<div class="empty-state"><strong>No hay mascotas registradas.</strong><div>Cuando existan registros apareceran aqui.</div></div>`}
+      </div>
+    </section>
+  `;
+
+  const renderAdminScans = () => `
+    <section class="grid admin-stack">
+      <div class="banner">
+        <div>
+          <h2 class="section-title" style="font-size:30px;">Actividad Global</h2>
+          <p class="section-desc">Ultimos escaneos registrados en la plataforma con fecha, mascota y distrito asociado.</p>
+        </div>
+        <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
+      </div>
+      <section class="scan-list admin-scan-list">
+        ${state.adminScans.length
+          ? state.adminScans.map((scan) => `
+            <article class="scan-item">
+              <div class="scan-name"><span>${e(scan.petName)}</span><span class="scan-time">${e(formatDateTime(scan.createdAt))}</span></div>
+              <div class="muted" style="margin-top:8px;">📍 ${e(scan.district || "Sin distrito")}</div>
+              <div class="scan-device"><span>${e(scan.device || "Dispositivo desconocido")}</span><span class="scan-mode">${typeof scan.lat === "number" && typeof scan.lon === "number" ? "GPS" : "Sin GPS"}</span></div>
+            </article>
+          `).join("")
+          : `<div class="empty-state"><strong>No hay actividad registrada.</strong><div>Los escaneos globales apareceran aqui.</div></div>`}
+      </section>
+    </section>
   `;
 
   const renderProfile = () => {
@@ -405,7 +725,7 @@
         <div><label>Raza</label><input class="field" id="new-breed" value="${e(state.newPet.breed)}" /></div>
         <div><label>Distrito</label><input class="field" id="new-district" value="${e(state.newPet.district)}" /></div>
       </div>
-      <div class="row"><label>Foto URL</label><input class="field" id="new-photo" value="${e(state.newPet.photo)}" /></div>
+      <div class="row"><label>Foto URL</label><input class="field" id="new-photo" placeholder="https://..." value="${e(state.newPet.photo)}" /></div>
       <div class="row"><label>Vacunas (coma)</label><input class="field" id="new-vaccines" value="${e(state.newPet.vaccines)}" /></div>
       <div class="row"><label>Alergias</label><input class="field" id="new-allergies" value="${e(state.newPet.allergies)}" /></div>
       <div class="row"><label>Cuidados</label><textarea id="new-notes">${e(state.newPet.careNotes)}</textarea></div>
@@ -512,6 +832,10 @@
       return renderFinder();
     }
 
+    if (state.activeTab === "admin-overview") return renderAdminOverview();
+    if (state.activeTab === "admin-users") return renderAdminUsers();
+    if (state.activeTab === "admin-pets") return renderAdminPets();
+    if (state.activeTab === "admin-scans") return renderAdminScans();
     if (state.activeTab === "pets") return renderPets();
     if (state.activeTab === "alerts") return renderAlerts();
     if (state.activeTab === "owner-profile") return renderProfile();
@@ -570,14 +894,37 @@
   };
 
   const navigate = (view, tab) => {
+    if (String(tab || "").startsWith("admin-") && !state.currentUser?.isAdmin) {
+      notify("Acceso restringido al panel administrativo.", "error");
+      return;
+    }
     state.currentView = view;
     state.activeTab = tab;
     state.sidebarOpen = false;
     render();
   };
 
+  const updateAdminUserInState = (userPayload) => {
+    const nextUser = normalizeAdminUser(userPayload);
+    const index = state.adminUsers.findIndex((item) => item.id === nextUser.id);
+    if (index >= 0) {
+      state.adminUsers[index] = { ...state.adminUsers[index], ...nextUser };
+    }
+    state.adminStats.pendingUsers = state.adminUsers.filter((user) => !user.approved && user.role !== "admin").length;
+  };
+
+  const updateAdminPetInState = (petPayload) => {
+    const nextPet = normalizeAdminPet(petPayload);
+    const index = state.adminPets.findIndex((item) => item.id === nextPet.id);
+    if (index >= 0) {
+      state.adminPets[index] = { ...state.adminPets[index], ...nextPet };
+    }
+    state.adminStats.lostPets = state.adminPets.filter((pet) => pet.status === "lost").length;
+    mergePetsForVisibility(state.currentUser?.isAdmin ? state.adminPets : state.pets);
+  };
+
   const savePetEdit = async (petId) => {
-    const pet = state.pets.find((p) => p.id === petId);
+    const pet = state.myPets.find((p) => p.id === petId);
     if (!pet) return;
 
     const payload = {
@@ -595,14 +942,21 @@
       care_notes: document.getElementById("edit-notes").value.trim()
     };
 
+    if (!isValidPhotoUrl(payload.photo)) {
+      notify("La foto debe ser una URL valida (http/https).", "error");
+      return;
+    }
+
     try {
       const data = await request(`/api/owner/pets/${encodeURIComponent(petId)}`, {
         method: "PUT",
         body: payload
       });
       const updated = normalizePet(data.pet || payload);
-      const index = state.pets.findIndex((item) => item.id === petId);
-      if (index >= 0) state.pets[index] = updated;
+      const ownIndex = state.myPets.findIndex((item) => item.id === petId);
+      if (ownIndex >= 0) state.myPets[ownIndex] = updated;
+      const globalIndex = state.pets.findIndex((item) => item.id === petId);
+      if (globalIndex >= 0) state.pets[globalIndex] = { ...state.pets[globalIndex], ...updated };
       state.editingPetId = null;
       notify("Ficha de mascota actualizada.");
       render();
@@ -622,6 +976,11 @@
     const breed = document.getElementById("new-breed").value.trim() || "Mestizo";
     const district = document.getElementById("new-district").value.trim() || "Miraflores";
     const photo = normalizePetPhoto(document.getElementById("new-photo").value);
+
+    if (!isValidPhotoUrl(photo)) {
+      notify("La foto debe ser una URL valida (http/https).", "error");
+      return;
+    }
     const vaccines = document
       .getElementById("new-vaccines")
       .value.split(",")
@@ -647,7 +1006,9 @@
         }
       });
 
-      state.pets.unshift(normalizePet(data.pet || {}));
+      const created = normalizePet(data.pet || {});
+      state.myPets.unshift(created);
+      state.pets.unshift(created);
       state.newPet = {
         name: "",
         type: "Perro",
@@ -668,14 +1029,13 @@
   };
 
   const shareLocation = (petId) => {
-    const pet = state.pets.find((p) => p.id === petId);
+    const pet = state.myPets.find((p) => p.id === petId);
     if (!pet) return;
 
     state.gpsLoading = true;
     render();
 
     const pushScan = async (lat, lon, device, accuracy = null) => {
-      const now = new Date();
       try {
         const response = await fetch(getApiUrl("/api/public/scans"), {
           method: "POST",
@@ -684,7 +1044,7 @@
           },
           body: JSON.stringify({
             petId: pet.id,
-            ownerId: state.currentUser?.id,
+            ownerId: pet.ownerId || state.currentUser?.id,
             latitude: lat,
             longitude: lon,
             accuracy,
@@ -693,21 +1053,28 @@
           })
         });
 
+        const data = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-          throw new Error("No se pudo registrar el escaneo.");
+          throw new Error(data.error || "No se pudo registrar el escaneo.");
         }
 
-        state.scans.unshift({
-          id: `sc-${Date.now()}`,
-          petId: pet.id,
-          petName: pet.name,
-          timestamp: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          district: `${pet.district} (GPS)` ,
-          lat,
-          lon,
-          device,
-          isRealGps: true
-        });
+        const normalizedScan = normalizeScan(
+          data.scan || {
+            id: `sc-${Date.now()}`,
+            petId: pet.id,
+            petName: pet.name,
+            createdAt: new Date().toISOString(),
+            district: `${pet.district} (GPS)`,
+            lat,
+            lon,
+            device,
+            isRealGps: true
+          },
+          { [pet.id]: pet }
+        );
+
+        state.scans.unshift(normalizedScan);
         state.currentMapCenter = { lat, lon };
         notify("Ubicacion compartida al propietario.");
       } catch {
@@ -772,6 +1139,17 @@
       return;
     }
 
+    if (action === "refresh-admin") {
+      loadAdminDashboard()
+        .then(() => {
+          mergePetsForVisibility(state.adminPets);
+          notify("Panel administrativo actualizado.");
+          render();
+        })
+        .catch((error) => notify(error.message, "error"));
+      return;
+    }
+
     if (action === "close-qr") {
       closeQrPreview();
       return;
@@ -782,7 +1160,7 @@
     }
 
     if (action === "toggle-status") {
-      const pet = state.pets.find((p) => p.id === target.dataset.id);
+      const pet = state.myPets.find((p) => p.id === target.dataset.id);
       if (!pet) return;
       const nextStatus = pet.status === "safe" ? "lost" : "safe";
       request(`/api/owner/pets/${encodeURIComponent(pet.id)}/status`, {
@@ -790,7 +1168,12 @@
         body: { status: nextStatus }
       })
         .then((data) => {
-          pet.status = normalizePet(data.pet || pet).status;
+          const normalized = normalizePet(data.pet || pet);
+          pet.status = normalized.status;
+          const globalPet = state.pets.find((item) => item.id === pet.id);
+          if (globalPet) {
+            globalPet.status = normalized.status;
+          }
           notify(pet.status === "lost" ? "Alerta de perdida activada." : "Mascota marcada a salvo.");
           render();
         })
@@ -798,7 +1181,71 @@
       return;
     }
 
+    if (action === "approve-user") {
+      request(`/api/admin/users/${encodeURIComponent(target.dataset.id)}/approval`, {
+        method: "PATCH",
+        body: { approved: target.dataset.approved === "true" }
+      })
+        .then((data) => {
+          updateAdminUserInState(data.user || {});
+          notify(target.dataset.approved === "true" ? "Usuario aprobado." : "Usuario bloqueado.");
+          render();
+        })
+        .catch((error) => notify(error.message, "error"));
+      return;
+    }
+
+    if (action === "toggle-user-role") {
+      request(`/api/admin/users/${encodeURIComponent(target.dataset.id)}/role`, {
+        method: "PATCH",
+        body: { role: target.dataset.role }
+      })
+        .then((data) => {
+          updateAdminUserInState(data.user || {});
+          notify(target.dataset.role === "admin" ? "Usuario promovido a administrador." : "Rol de administrador retirado.");
+          render();
+        })
+        .catch((error) => notify(error.message, "error"));
+      return;
+    }
+
+    if (action === "admin-toggle-pet-status") {
+      request(`/api/admin/pets/${encodeURIComponent(target.dataset.id)}/status`, {
+        method: "PATCH",
+        body: { status: target.dataset.status }
+      })
+        .then((data) => {
+          updateAdminPetInState(data.pet || {});
+          notify(target.dataset.status === "lost" ? "Mascota marcada como perdida." : "Mascota marcada a salvo.");
+          render();
+        })
+        .catch((error) => notify(error.message, "error"));
+      return;
+    }
+
+    if (action === "delete-pet") {
+      request(`/api/admin/pets/${encodeURIComponent(target.dataset.id)}`, {
+        method: "DELETE"
+      })
+        .then(() => {
+          state.adminPets = state.adminPets.filter((pet) => pet.id !== target.dataset.id);
+          state.pets = state.pets.filter((pet) => pet.id !== target.dataset.id);
+          state.myPets = state.myPets.filter((pet) => pet.id !== target.dataset.id);
+          state.adminStats.totalPets = state.adminPets.length;
+          state.adminStats.lostPets = state.adminPets.filter((pet) => pet.status === "lost").length;
+          notify("Mascota eliminada del sistema.");
+          render();
+        })
+        .catch((error) => notify(error.message, "error"));
+      return;
+    }
+
     if (action === "edit-pet") {
+      const ownsPet = state.myPets.some((p) => p.id === target.dataset.id);
+      if (!ownsPet) {
+        notify("Solo puedes editar tus propias mascotas.", "warning");
+        return;
+      }
       state.editingPetId = target.dataset.id;
       render();
       return;

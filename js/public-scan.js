@@ -1,7 +1,13 @@
 (() => {
   const params = new URLSearchParams(window.location.search || "");
-  const petId = String(params.get("scan") || "").trim();
-  const ownerId = String(params.get("owner") || "").trim();
+  const pathParts = String(window.location.pathname || "")
+    .split("/")
+    .filter(Boolean);
+  const pathPetId = pathParts[0] === "s" ? String(pathParts[1] || "").trim() : "";
+  const pathOwnerId = pathParts[0] === "s" ? String(pathParts[2] || "").trim() : "";
+
+  const petId = String(pathPetId || params.get("s") || params.get("scan") || "").trim();
+  const ownerId = String(pathOwnerId || params.get("o") || params.get("owner") || "").trim();
 
   const configuredApiBase = String(window.PETTAG_CONFIG?.API_BASE_URL || "").trim();
   const apiBase = (configuredApiBase || localStorage.getItem("pettag_api_base") || "").trim().replace(/\/$/, "");
@@ -28,16 +34,27 @@
   const renderPet = (payload) => {
     const pet = payload?.pet || {};
     const owner = pet.owner || {};
+    const status = String(pet.status || "safe").trim().toLowerCase();
+    const statusLabel = status === "lost" ? "Perdida" : "A salvo";
+    const vaccines = Array.isArray(pet.vaccines) ? pet.vaccines.filter(Boolean) : [];
+    const allergies = String(pet.allergies || "").trim() || "Sin registro";
+    const careNotes = String(pet.careNotes || pet.care_notes || "").trim() || "Sin notas especiales";
+    const phoneHtml = status === "lost"
+      ? `<p><strong>Telefono:</strong> ${e(owner.phone || "No disponible")}</p>`
+      : `<p class="muted">Telefono oculto por privacidad (solo visible cuando la mascota esta perdida).</p>`;
 
     petCard.innerHTML = `
       <div class="card-body">
         <h2 style="margin-top: 0;">${e(pet.name || "Mascota")}</h2>
         <p class="muted">${e(pet.type || "")} ${pet.breed ? `· ${e(pet.breed)}` : ""}</p>
         <p><strong>Distrito:</strong> ${e(pet.district || "No definido")}</p>
-        <p><strong>Estado:</strong> ${e(pet.status || "safe")}</p>
+        <p><strong>Estado:</strong> ${e(statusLabel)}</p>
+        <p><strong>Vacunas:</strong> ${vaccines.length ? e(vaccines.join(", ")) : "Sin registro"}</p>
+        <p><strong>Alergias:</strong> ${e(allergies)}</p>
+        <p><strong>Cuidados:</strong> ${e(careNotes)}</p>
         <hr style="opacity:.2;" />
         <p><strong>Propietario:</strong> ${e(owner.name || "No disponible")}</p>
-        <p><strong>Telefono:</strong> ${e(owner.phone || "No disponible")}</p>
+        ${phoneHtml}
       </div>
     `;
 
@@ -52,7 +69,7 @@
       },
       body: JSON.stringify({
         petId,
-        ownerId,
+        ownerId: ownerId || null,
         latitude,
         longitude,
         accuracy,
@@ -105,14 +122,15 @@
   };
 
   const boot = async () => {
-    if (!petId || !ownerId) {
-      setState("QR invalido: faltan parametros de identificacion.", true);
+    if (!petId) {
+      setState("QR invalido: falta identificador de mascota.", true);
       return;
     }
 
     try {
       setState("Cargando informacion de la mascota...");
-      const response = await fetch(getApiUrl(`/api/public/pets/${encodeURIComponent(petId)}?owner=${encodeURIComponent(ownerId)}`));
+      const ownerQuery = ownerId ? `?owner=${encodeURIComponent(ownerId)}` : "";
+      const response = await fetch(getApiUrl(`/api/public/pets/${encodeURIComponent(petId)}${ownerQuery}`));
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
