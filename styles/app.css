@@ -627,6 +627,24 @@ a {
   background: #f8fbf6;
 }
 
+.pet-photo-placeholder {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  border-color: rgba(126, 150, 102, 0.45);
+  background: linear-gradient(135deg, #f8fbf6 0%, #eef6e7 100%);
+}
+
+.pet-photo-placeholder span {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #5a6f47;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
 .pet-copy strong {
   display: block;
   font-size: 18px;

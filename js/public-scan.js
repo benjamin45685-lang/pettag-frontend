@@ -24,6 +24,29 @@
     "'": "&#39;"
   }[char]));
 
+  const normalizePetPhoto = (value) => {
+    const photo = String(value || "").trim();
+    if (!photo) return "";
+
+    if (photo.startsWith("data:")) {
+      return "";
+    }
+
+    const lowerPhoto = photo.toLowerCase();
+    const blockedPhotoFragments = [
+      "assets/images/logo.png",
+      "/assets/images/logo.png",
+      "assets/images/horlogo.png",
+      "/assets/images/horlogo.png"
+    ];
+
+    if (blockedPhotoFragments.some((fragment) => lowerPhoto.includes(fragment))) {
+      return "";
+    }
+
+    return photo;
+  };
+
   const getApiUrl = (path) => `${apiBase}${path}`;
 
   const setState = (message, isError = false) => {
@@ -34,6 +57,8 @@
   const renderPet = (payload) => {
     const pet = payload?.pet || {};
     const owner = pet.owner || {};
+    const photo = normalizePetPhoto(pet.photo);
+    const hasPhoto = Boolean(photo);
     const status = String(pet.status || "safe").trim().toLowerCase();
     const statusLabel = status === "lost" ? "Perdida" : "A salvo";
     const vaccines = Array.isArray(pet.vaccines) ? pet.vaccines.filter(Boolean) : [];
@@ -42,11 +67,19 @@
     const phoneHtml = status === "lost"
       ? `<p><strong>Telefono:</strong> ${e(owner.phone || "No disponible")}</p>`
       : `<p class="muted">Telefono oculto por privacidad (solo visible cuando la mascota esta perdida).</p>`;
+    const photoHtml = hasPhoto
+      ? `<img class="pet-photo" src="${e(photo)}" alt="${e(pet.name || "Mascota")}" data-role="pet-photo" />`
+      : `<div class="pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>`;
 
     petCard.innerHTML = `
       <div class="card-body">
-        <h2 style="margin-top: 0;">${e(pet.name || "Mascota")}</h2>
-        <p class="muted">${e(pet.type || "")} ${pet.breed ? `· ${e(pet.breed)}` : ""}</p>
+        <div class="pet-head" style="margin-bottom: 12px;">
+          ${photoHtml}
+          <div class="pet-copy">
+            <h2 style="margin-top: 0; margin-bottom: 2px;">${e(pet.name || "Mascota")}</h2>
+            <p class="muted" style="margin: 0;">${e(pet.type || "")} ${pet.breed ? `· ${e(pet.breed)}` : ""}</p>
+          </div>
+        </div>
         <p><strong>Distrito:</strong> ${e(pet.district || "No definido")}</p>
         <p><strong>Estado:</strong> ${e(statusLabel)}</p>
         <p><strong>Vacunas:</strong> ${vaccines.length ? e(vaccines.join(", ")) : "Sin registro"}</p>
@@ -57,6 +90,13 @@
         ${phoneHtml}
       </div>
     `;
+
+    const photoEl = petCard.querySelector('[data-role="pet-photo"]');
+    if (photoEl) {
+      photoEl.addEventListener("error", () => {
+        photoEl.outerHTML = '<div class="pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>';
+      }, { once: true });
+    }
 
     petCard.style.display = "block";
   };
