@@ -15,6 +15,7 @@
   const stateEl = document.getElementById("scanState");
   const petCard = document.getElementById("petCard");
   const shareBtn = document.getElementById("shareBtn");
+  let pendingGlobalLoads = 0;
 
   const e = (value) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({
     "&": "&amp;",
@@ -47,7 +48,49 @@
     return photo;
   };
 
+  const normalizePetStatus = (value) => {
+    const status = String(value || "").trim().toLowerCase();
+    if (!status) return "safe";
+    if (["lost", "perdida", "perdido", "missing"].includes(status)) return "lost";
+    if (["safe", "a salvo", "asalvo", "ok"].includes(status)) return "safe";
+    return "safe";
+  };
+
   const getApiUrl = (path) => `${apiBase}${path}`;
+
+  const ensureGlobalLoader = () => {
+    let loader = document.getElementById("globalLoader");
+    if (loader) return loader;
+
+    loader = document.createElement("div");
+    loader.id = "globalLoader";
+    loader.className = "global-loader";
+    loader.style.display = "none";
+    loader.setAttribute("role", "status");
+    loader.setAttribute("aria-live", "polite");
+    loader.setAttribute("aria-label", "Cargando contenido");
+    loader.innerHTML = `
+      <div class="global-loader-card">
+        <img class="global-loader-logo" src="/assets/images/horlogo.png" alt="PetTag" />
+        <div class="global-loader-spinner" aria-hidden="true"></div>
+        <div class="global-loader-text">Sincronizando informacion...</div>
+      </div>
+    `;
+    document.body.appendChild(loader);
+    return loader;
+  };
+
+  const beginGlobalLoad = () => {
+    pendingGlobalLoads += 1;
+    const loader = ensureGlobalLoader();
+    loader.style.display = "grid";
+  };
+
+  const endGlobalLoad = () => {
+    pendingGlobalLoads = Math.max(0, pendingGlobalLoads - 1);
+    const loader = ensureGlobalLoader();
+    loader.style.display = pendingGlobalLoads > 0 ? "grid" : "none";
+  };
 
   const setState = (message, isError = false) => {
     stateEl.textContent = message;
@@ -59,7 +102,7 @@
     const owner = pet.owner || {};
     const photo = normalizePetPhoto(pet.photo);
     const hasPhoto = Boolean(photo);
-    const status = String(pet.status || "safe").trim().toLowerCase();
+    const status = normalizePetStatus(pet.status);
     const statusLabel = status === "lost" ? "Perdida" : "A salvo";
     const vaccines = Array.isArray(pet.vaccines) ? pet.vaccines.filter(Boolean) : [];
     const allergies = String(pet.allergies || "").trim() || "Sin registro";
@@ -132,6 +175,7 @@
       return;
     }
 
+    beginGlobalLoad();
     shareBtn.disabled = true;
     shareBtn.textContent = "Enviando ubicacion...";
 
@@ -145,6 +189,8 @@
           setState(error.message || "No se pudo enviar la ubicacion.", true);
           shareBtn.disabled = false;
           shareBtn.textContent = "Compartir mi ubicacion";
+        } finally {
+          endGlobalLoad();
         }
       },
       async () => {
@@ -155,6 +201,8 @@
           setState(error.message || "No se pudo enviar la ubicacion.", true);
           shareBtn.disabled = false;
           shareBtn.textContent = "Compartir mi ubicacion";
+        } finally {
+          endGlobalLoad();
         }
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
@@ -168,6 +216,7 @@
     }
 
     try {
+      beginGlobalLoad();
       setState("Cargando informacion de la mascota...");
       const ownerQuery = ownerId ? `?owner=${encodeURIComponent(ownerId)}` : "";
       const response = await fetch(getApiUrl(`/api/public/pets/${encodeURIComponent(petId)}${ownerQuery}`));
@@ -182,6 +231,8 @@
       shareBtn.disabled = false;
     } catch (error) {
       setState(error.message || "No se pudo cargar el escaneo.", true);
+    } finally {
+      endGlobalLoad();
     }
   };
 

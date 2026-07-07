@@ -3,6 +3,7 @@
   const configuredApiBase = String(window.PETTAG_CONFIG?.API_BASE_URL || "").trim();
   const configuredTimeZone = String(window.PETTAG_CONFIG?.TIME_ZONE || "America/Lima").trim() || "America/Lima";
   const apiBase = (configuredApiBase || localStorage.getItem("pettag_api_base") || "").trim().replace(/\/$/, "");
+  const REQUEST_TIMEOUT_MS = 15000;
 
   if (!token) {
     window.location.replace("login.html");
@@ -12,10 +13,12 @@
   const state = {
     token,
     apiBase,
+    bootstrapping: true,
     currentView: "owner-dashboard",
     activeTab: "pets",
     sidebarOpen: false,
     loading: true,
+    pendingRequests: 0,
     currentUser: null,
     isEditingOwner: false,
     editingPetId: null,
@@ -55,9 +58,15 @@
     adminUsers: [],
     adminPets: [],
     adminScans: [],
+    adminUserSearch: "",
+    adminUserFilter: "all",
+    adminUserSort: "pending-first",
     selectedPetId: "",
     qrPreview: null
   };
+
+  const ADMIN_TABS = new Set(["admin-overview", "admin-users", "admin-pets", "admin-scans"]);
+  const ADMIN_ACTIONS = new Set(["refresh-admin", "approve-user", "toggle-user-role", "admin-toggle-pet-status", "delete-pet"]);
 
   const app = document.getElementById("app");
   const e = (value) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({
@@ -91,6 +100,14 @@
     return photo;
   };
 
+  const normalizePetStatus = (value) => {
+    const status = String(value || "").trim().toLowerCase();
+    if (!status) return "safe";
+    if (["lost", "perdida", "perdido", "missing"].includes(status)) return "lost";
+    if (["safe", "a salvo", "asalvo", "ok"].includes(status)) return "safe";
+    return "safe";
+  };
+
   const isValidPhotoUrl = (value) => {
     const photo = String(value || "").trim();
     if (!photo) return true;
@@ -105,32 +122,60 @@
   const getApiUrl = (path) => `${state.apiBase}${path}`;
 
   const request = async (path, options = {}) => {
-    const response = await fetch(getApiUrl(path), {
-      method: options.method || "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${state.token}`,
-        ...(options.headers || {})
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined
-    });
+    const shouldTrackLoading = options.trackLoading !== false;
+    const includeAuth = options.includeAuth !== false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    const data = await response.json().catch(() => ({}));
-    if (response.status === 401) {
-      resetSession();
-      throw new Error("Sesion expirada.");
+    if (shouldTrackLoading) {
+      state.pendingRequests += 1;
+      state.loading = true;
+      render();
     }
 
-    if (response.status === 413) {
-      throw new Error("La imagen es demasiado grande. Prueba con una foto mas ligera.");
-    }
+    try {
+      const response = await fetch(getApiUrl(path), {
+        method: options.method || "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(includeAuth ? { Authorization: `Bearer ${state.token}` } : {}),
+          ...(options.headers || {})
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal
+      });
 
-    if (!response.ok) {
-      throw new Error(data.error || "No se pudo completar la solicitud.");
-    }
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        resetSession();
+        throw new Error("Sesion expirada.");
+      }
 
-    return data;
+      if (response.status === 413) {
+        throw new Error("La imagen es demasiado grande. Prueba con una foto mas ligera.");
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo completar la solicitud.");
+      }
+
+      return data;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("La solicitud tardo demasiado. Verifica conexion y API.");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+      if (shouldTrackLoading) {
+        state.pendingRequests = Math.max(0, state.pendingRequests - 1);
+        state.loading = state.pendingRequests > 0;
+        render();
+      }
+    }
   };
+
+  const hasAdminAccess = () => state.currentUser?.isAdmin === true;
 
   const normalizePet = (pet) => ({
     id: String(pet.id || "").trim(),
@@ -145,7 +190,7 @@
     vaccines: Array.isArray(pet.vaccines) ? pet.vaccines : [],
     allergies: String(pet.allergies || "").trim(),
     careNotes: String(pet.care_notes || pet.careNotes || "").trim(),
-    status: String(pet.status || "safe").trim() || "safe"
+    status: normalizePetStatus(pet.status)
   });
 
   const normalizeAdminUser = (user) => ({
@@ -211,7 +256,14 @@
   };
 
   const hydrateDashboard = (payload) => {
-    state.currentUser = payload.user || null;
+    state.currentUser = payload.user
+      ? {
+          ...payload.user,
+          role: String(payload.user.role || "user").trim().toLowerCase() || "user",
+          isAdmin: payload.user.isAdmin === true,
+          approved: payload.user.approved === false ? false : true
+        }
+      : null;
     state.ownerProfile = {
       name: payload.profile?.name || "",
       phone: payload.profile?.phone || "",
@@ -249,6 +301,25 @@
     state.adminScans = Array.isArray(payload.scans) ? payload.scans.map((scan) => normalizeScan(scan, petLookup)) : [];
   };
 
+  const resetAdminState = () => {
+    state.adminStats = {
+      totalUsers: 0,
+      pendingUsers: 0,
+      totalPets: 0,
+      lostPets: 0,
+      totalScans: 0
+    };
+    state.adminUsers = [];
+    state.adminPets = [];
+    state.adminScans = [];
+  };
+
+  const ensureAllowedTab = () => {
+    if (!hasAdminAccess() && ADMIN_TABS.has(state.activeTab)) {
+      state.activeTab = "pets";
+    }
+  };
+
   const loadAdminDashboard = async () => {
     const data = await request("/api/admin/dashboard");
     hydrateAdminDashboard(data);
@@ -267,28 +338,33 @@
 
     state.pets = allPets
       .map(normalizePet)
-      .map((pet) => ownById[pet.id] || pet);
+      .map((pet) => {
+        const ownPet = ownById[pet.id];
+        return ownPet ? { ...ownPet, ...pet, status: normalizePetStatus(pet.status) } : pet;
+      });
   };
 
   const loadDashboard = async () => {
     try {
-      state.loading = true;
-      render();
       const meData = await request("/api/auth/me");
 
       hydrateDashboard(meData);
 
-      if (state.currentUser?.isAdmin) {
+      if (hasAdminAccess()) {
         await loadAdminDashboard();
         mergePetsForVisibility(state.adminPets);
       } else {
+        resetAdminState();
         const allPetsData = await request("/api/pets").catch(() => ({ pets: [] }));
         mergePetsForVisibility(allPetsData.pets);
       }
+
+      ensureAllowedTab();
     } catch (error) {
       notify(error.message || "No se pudo cargar el dashboard.", "error");
     } finally {
-      state.loading = false;
+      state.bootstrapping = false;
+      state.loading = state.pendingRequests > 0;
       render();
     }
   };
@@ -351,22 +427,29 @@
 
   const renderSidebar = () => {
     const ownerLinks = [
-      { key: "pets", icon: "🐾", label: "Mascotas Registradas", badge: state.pets.length },
-      { key: "alerts", icon: "🗺️", label: "Monitoreo GPS", badge: state.scans.length || "" },
-      { key: "owner-profile", icon: "👤", label: "Mi Perfil Propietario", badge: "" },
-      { key: "register", icon: "➕", label: "Inscribir Placa QR", badge: "" }
+      { key: "pets", icon: "paw", glyph: "🐾", label: "Mascotas Registradas", badge: state.pets.length },
+      { key: "register", icon: "add", glyph: "✚", label: "Inscribir Placa QR", badge: "" },
+      { key: "alerts", icon: "map", glyph: "🗺", label: "Monitoreo GPS", badge: state.scans.length || "" },
+      { key: "owner-profile", icon: "user", glyph: "👤", label: "Mi Perfil Propietario", badge: "" }
     ];
 
-    const adminLinks = state.currentUser?.isAdmin
+    const adminLinks = hasAdminAccess()
       ? [
-          { key: "admin-overview", icon: "🛡️", label: "Resumen Admin", badge: state.adminStats.pendingUsers || "" },
-          { key: "admin-users", icon: "✅", label: "Aprobar Usuarios", badge: state.adminStats.pendingUsers || "" },
-          { key: "admin-pets", icon: "📋", label: "Control de Mascotas", badge: state.adminStats.totalPets || "" },
-          { key: "admin-scans", icon: "📡", label: "Actividad Global", badge: state.adminStats.totalScans || "" }
+          { key: "admin-overview", icon: "shield", glyph: "🛡", label: "Resumen Admin", badge: state.adminStats.pendingUsers || "" },
+          { key: "admin-users", icon: "check", glyph: "☑", label: "Aprobar Usuarios", badge: state.adminStats.pendingUsers || "" },
+          { key: "admin-pets", icon: "list", glyph: "📋", label: "Control de Mascotas", badge: state.adminStats.totalPets || "" },
+          { key: "admin-scans", icon: "activity", glyph: "📡", label: "Actividad Global", badge: state.adminStats.totalScans || "" }
         ]
       : [];
 
-    const links = [...ownerLinks, ...adminLinks];
+    const renderNavItem = (item) => `
+      <button class="nav-btn ${state.activeTab === item.key && state.currentView === "owner-dashboard" ? "active" : ""}" data-action="navigate" data-view="owner-dashboard" data-tab="${item.key}">
+        <span class="nav-label">
+          <span class="nav-label-main"><span class="nav-icon ${item.icon}">${item.glyph}</span><span>${item.label}</span></span>
+          ${item.badge !== "" ? `<span class="nav-badge">${item.badge}</span>` : ""}
+        </span>
+      </button>
+    `;
 
     return `
       <div class="sidebar-layer ${state.sidebarOpen ? "is-open" : ""}">
@@ -385,20 +468,16 @@
               </div>
             </div>
 
-            <div class="sidebar-nav">
-              ${links
-                .map((item) => `
-                  <button class="nav-btn ${state.activeTab === item.key && state.currentView === "owner-dashboard" ? "active" : ""}" data-action="navigate" data-view="owner-dashboard" data-tab="${item.key}">
-                    <span class="nav-label">
-                      <span>${item.icon} ${item.label}</span>
-                      ${item.badge !== "" ? `<span class="nav-badge">${item.badge}</span>` : ""}
-                    </span>
-                  </button>
-                `)
-                .join("")}
+            <div class="sidebar-nav-group">
+              <div class="sidebar-section-title">Propietario</div>
+              <div class="sidebar-nav">
+                ${ownerLinks.map(renderNavItem).join("")}
+              </div>
             </div>
 
-            ${state.currentUser?.isAdmin ? `<div class="sidebar-section-title">Administracion</div><div class="muted">Solo visible para cuentas administradoras aprobadas.</div>` : ""}
+            ${hasAdminAccess()
+              ? `<div class="sidebar-nav-group"><div class="sidebar-section-title">Administracion</div><div class="sidebar-nav">${adminLinks.map(renderNavItem).join("")}</div><div class="muted">Solo visible para cuentas administradoras aprobadas.</div></div>`
+              : ""}
 
             <div class="sidebar-section-title">Simular lectura fisica</div>
             <div class="scan-shortcuts">
@@ -572,48 +651,128 @@
     </section>
   `;
 
+  const getVisibleAdminUsers = () => {
+    const query = String(state.adminUserSearch || "").trim().toLowerCase();
+    const filter = state.adminUserFilter || "all";
+    const sort = state.adminUserSort || "pending-first";
+
+    const matchesQuery = (user) => {
+      if (!query) return true;
+      const haystack = [user.name, user.email, user.district].map((value) => String(value || "").toLowerCase());
+      return haystack.some((value) => value.includes(query));
+    };
+
+    const matchesFilter = (user) => {
+      if (filter === "pending") return !user.approved;
+      if (filter === "approved") return user.approved;
+      if (filter === "admins") return user.role === "admin";
+      if (filter === "users") return user.role !== "admin";
+      return true;
+    };
+
+    const users = state.adminUsers.filter((user) => matchesQuery(user) && matchesFilter(user));
+
+    const byName = (left, right) => String(left.name || left.email || "").localeCompare(String(right.name || right.email || ""), "es", { sensitivity: "base" });
+    const byPets = (left, right) => Number(left.petsCount || 0) - Number(right.petsCount || 0);
+
+    users.sort((left, right) => {
+      if (sort === "name-asc") return byName(left, right);
+      if (sort === "name-desc") return byName(right, left);
+      if (sort === "pets-asc") return byPets(left, right);
+      if (sort === "pets-desc") return byPets(right, left);
+
+      const leftPendingWeight = left.approved ? 1 : 0;
+      const rightPendingWeight = right.approved ? 1 : 0;
+      if (leftPendingWeight !== rightPendingWeight) return leftPendingWeight - rightPendingWeight;
+      return byName(left, right);
+    });
+
+    return users;
+  };
+
   const renderAdminUsers = () => `
+    ${(() => {
+      const visibleUsers = getVisibleAdminUsers();
+      return `
     <section class="grid admin-stack">
       <div class="banner">
         <div>
-          <h2 class="section-title" style="font-size:30px;">Aprobacion y Roles</h2>
+          <h2 class="section-title section-title-md">Aprobacion y Roles</h2>
           <p class="section-desc">Aprueba cuentas nuevas y define que usuarios operan como administradores.</p>
         </div>
         <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
       </div>
+      <div class="admin-users-toolbar">
+        <input
+          class="field"
+          type="search"
+          placeholder="Buscar por nombre, correo o distrito"
+          value="${e(state.adminUserSearch)}"
+          data-action="admin-users-search"
+        />
+        <select class="field" data-action="admin-users-filter">
+          <option value="all" ${state.adminUserFilter === "all" ? "selected" : ""}>Todos</option>
+          <option value="pending" ${state.adminUserFilter === "pending" ? "selected" : ""}>Pendientes</option>
+          <option value="approved" ${state.adminUserFilter === "approved" ? "selected" : ""}>Aprobados</option>
+          <option value="users" ${state.adminUserFilter === "users" ? "selected" : ""}>Solo usuarios</option>
+          <option value="admins" ${state.adminUserFilter === "admins" ? "selected" : ""}>Solo admins</option>
+        </select>
+        <select class="field" data-action="admin-users-sort">
+          <option value="pending-first" ${state.adminUserSort === "pending-first" ? "selected" : ""}>Orden: Pendientes primero</option>
+          <option value="name-asc" ${state.adminUserSort === "name-asc" ? "selected" : ""}>Orden: Nombre A-Z</option>
+          <option value="name-desc" ${state.adminUserSort === "name-desc" ? "selected" : ""}>Orden: Nombre Z-A</option>
+          <option value="pets-desc" ${state.adminUserSort === "pets-desc" ? "selected" : ""}>Orden: Mascotas mayor a menor</option>
+          <option value="pets-asc" ${state.adminUserSort === "pets-asc" ? "selected" : ""}>Orden: Mascotas menor a mayor</option>
+        </select>
+        <div class="admin-users-count">${visibleUsers.length} resultado(s)</div>
+      </div>
       <div class="admin-table-wrap">
-        <div class="admin-table">
-          <div class="admin-table-head">
-            <span>Usuario</span><span>Estado</span><span>Rol</span><span>Mascotas</span><span>Acciones</span>
-          </div>
-          ${state.adminUsers.map((user) => `
-            <article class="admin-row">
-              <div>
-                <strong>${e(user.name || "Sin nombre")}</strong>
-                <div class="muted">${e(user.email)}</div>
-                <div class="muted">${e(user.district || "Sin distrito")}</div>
-              </div>
-              <div><span class="chip ${user.approved ? "ok" : "warn"}">${user.approved ? "Aprobado" : "Pendiente"}</span></div>
-              <div><span class="chip">${user.role === "admin" ? "Admin" : "Usuario"}</span></div>
-              <div><strong>${user.petsCount}</strong><div class="muted">${user.scansCount} escaneos</div></div>
-              <div class="inline-actions">
-                ${user.role !== "admin" ? `<button class="action-btn compact-btn" data-action="approve-user" data-id="${user.id}" data-approved="${user.approved ? "false" : "true"}">${user.approved ? "Bloquear" : "Aprobar"}</button>` : ""}
-                ${state.currentUser?.id !== user.id
-                  ? `<button class="secondary-btn compact-btn" data-action="toggle-user-role" data-id="${user.id}" data-role="${user.role === "admin" ? "user" : "admin"}">${user.role === "admin" ? "Quitar admin" : "Hacer admin"}</button>`
-                  : `<span class="muted">Tu cuenta</span>`}
-              </div>
-            </article>
-          `).join("")}
-        </div>
+        <table class="admin-users-table">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Estado</th>
+              <th>Rol</th>
+              <th>Mascotas</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${visibleUsers.length
+              ? visibleUsers.map((user) => `
+              <tr>
+                <td>
+                  <strong>${e(user.name || "Sin nombre")}</strong>
+                  <div class="muted">${e(user.email)}</div>
+                  <div class="muted">${e(user.district || "Sin distrito")}</div>
+                </td>
+                <td><span class="chip ${user.approved ? "ok" : "warn"}">${user.approved ? "Aprobado" : "Pendiente"}</span></td>
+                <td><span class="chip">${user.role === "admin" ? "Admin" : "Usuario"}</span></td>
+                <td><strong>${user.petsCount}</strong><div class="muted">${user.scansCount} escaneos</div></td>
+                <td>
+                  <div class="inline-actions">
+                    ${user.role !== "admin" ? `<button class="action-btn compact-btn" data-action="approve-user" data-id="${user.id}" data-approved="${user.approved ? "false" : "true"}">${user.approved ? "Bloquear" : "Aprobar"}</button>` : ""}
+                    ${state.currentUser?.id !== user.id
+                      ? `<button class="secondary-btn compact-btn" data-action="toggle-user-role" data-id="${user.id}" data-role="${user.role === "admin" ? "user" : "admin"}">${user.role === "admin" ? "Quitar admin" : "Hacer admin"}</button>`
+                      : `<span class="muted">Tu cuenta</span>`}
+                  </div>
+                </td>
+              </tr>
+            `).join("")
+              : `<tr><td colspan="5"><div class="empty-state" style="padding:20px 12px;"><strong>Sin resultados.</strong><div>Prueba otro filtro o termino de busqueda.</div></div></td></tr>`}
+          </tbody>
+        </table>
       </div>
     </section>
+  `;
+    })()}
   `;
 
   const renderAdminPets = () => `
     <section class="grid admin-stack">
       <div class="banner">
         <div>
-          <h2 class="section-title" style="font-size:30px;">Control Global de Mascotas</h2>
+          <h2 class="section-title section-title-md">Control Global de Mascotas</h2>
           <p class="section-desc">Revisa propietarios, alertas activas y elimina registros incorrectos si hace falta.</p>
         </div>
         <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
@@ -655,7 +814,7 @@
     <section class="grid admin-stack">
       <div class="banner">
         <div>
-          <h2 class="section-title" style="font-size:30px;">Actividad Global</h2>
+          <h2 class="section-title section-title-md">Actividad Global</h2>
           <p class="section-desc">Ultimos escaneos registrados en la plataforma con fecha, mascota y distrito asociado.</p>
         </div>
         <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
@@ -678,7 +837,7 @@
     if (state.isEditingOwner) {
       return `
       <section class="profile-shell"><div class="profile-body">
-        <h2 class="section-title" style="font-size:30px;">Mi Perfil de Propietario</h2>
+        <h2 class="section-title section-title-md">Mi Perfil de Propietario</h2>
         <p class="section-desc">Actualiza tus canales de contacto sin alterar el QR de tus mascotas.</p>
         <div class="form-grid row">
           <div><label>Nombre</label><input class="field" id="owner-name" value="${e(state.tempOwnerProfile.name)}" /></div>
@@ -692,7 +851,7 @@
 
     return `
       <section class="profile-shell"><div class="profile-body">
-        <h2 class="section-title" style="font-size:30px;">Mi Perfil de Propietario</h2>
+        <h2 class="section-title section-title-md">Mi Perfil de Propietario</h2>
         <p class="section-desc">Actualiza tus canales de contacto de forma inmediata. No altera el QR de tus mascotas.</p>
         <div class="profile-summary">
           <div style="display:flex;align-items:center;gap:12px;">
@@ -717,7 +876,7 @@
 
   const renderRegister = () => `
     <section class="surface-card"><div class="surface-body">
-      <h2 class="section-title" style="font-size:30px;">Inscribir un Nuevo Collar QR</h2>
+      <h2 class="section-title section-title-md">Inscribir un Nuevo Collar QR</h2>
       <p class="section-desc">Genera la ficha tecnica y asocia un codigo estatico numerico para la placa de tu mascota.</p>
       <div class="form-grid row">
         <div><label>Nombre *</label><input class="field" id="new-name" value="${e(state.newPet.name)}" /></div>
@@ -736,7 +895,7 @@
   const renderAlerts = () => `
     <div class="banner">
       <div>
-        <h2 class="section-title" style="font-size:30px;">Rastreo GPS en Tiempo Real</h2>
+        <h2 class="section-title section-title-md">Rastreo GPS en Tiempo Real</h2>
         <p class="section-desc">Monitorea las coordenadas registradas por quienes escanean las placas QR.</p>
       </div>
       <span class="badge">${state.scans.length} alertas</span>
@@ -827,7 +986,25 @@
     `;
   };
 
+  const renderDashboardSkeleton = () => `
+    <section class="loading-shell" aria-hidden="true">
+      <div class="skeleton-heading"></div>
+      <div class="skeleton-copy"></div>
+      <div class="skeleton-grid">
+        <article class="skeleton-card"></article>
+        <article class="skeleton-card"></article>
+        <article class="skeleton-card"></article>
+      </div>
+    </section>
+  `;
+
   const renderMain = () => {
+    ensureAllowedTab();
+
+    if (state.loading && !state.currentUser) {
+      return renderDashboardSkeleton();
+    }
+
     if (state.currentView === "finder-view") {
       return renderFinder();
     }
@@ -894,7 +1071,7 @@
   };
 
   const navigate = (view, tab) => {
-    if (String(tab || "").startsWith("admin-") && !state.currentUser?.isAdmin) {
+    if (ADMIN_TABS.has(String(tab || "")) && !hasAdminAccess()) {
       notify("Acceso restringido al panel administrativo.", "error");
       return;
     }
@@ -918,9 +1095,23 @@
     const index = state.adminPets.findIndex((item) => item.id === nextPet.id);
     if (index >= 0) {
       state.adminPets[index] = { ...state.adminPets[index], ...nextPet };
+    } else {
+      state.adminPets.unshift(nextPet);
+      state.adminStats.totalPets = state.adminPets.length;
     }
+
+    const ownIndex = state.myPets.findIndex((item) => item.id === nextPet.id);
+    if (ownIndex >= 0) {
+      state.myPets[ownIndex] = { ...state.myPets[ownIndex], ...nextPet };
+    }
+
+    const globalIndex = state.pets.findIndex((item) => item.id === nextPet.id);
+    if (globalIndex >= 0) {
+      state.pets[globalIndex] = { ...state.pets[globalIndex], ...nextPet };
+    }
+
     state.adminStats.lostPets = state.adminPets.filter((pet) => pet.status === "lost").length;
-    mergePetsForVisibility(state.currentUser?.isAdmin ? state.adminPets : state.pets);
+    mergePetsForVisibility(hasAdminAccess() ? state.adminPets : state.pets);
   };
 
   const savePetEdit = async (petId) => {
@@ -1033,16 +1224,15 @@
     if (!pet) return;
 
     state.gpsLoading = true;
+    state.loading = true;
     render();
 
     const pushScan = async (lat, lon, device, accuracy = null) => {
       try {
-        const response = await fetch(getApiUrl("/api/public/scans"), {
+        const data = await request("/api/public/scans", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
+          includeAuth: false,
+          body: {
             petId: pet.id,
             ownerId: pet.ownerId || state.currentUser?.id,
             latitude: lat,
@@ -1050,14 +1240,8 @@
             accuracy,
             note: null,
             device
-          })
+          }
         });
-
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error(data.error || "No se pudo registrar el escaneo.");
-        }
 
         const normalizedScan = normalizeScan(
           data.scan || {
@@ -1081,6 +1265,7 @@
         notify("No se pudo registrar el escaneo en backend.", "error");
       } finally {
         state.gpsLoading = false;
+        state.loading = state.pendingRequests > 0;
         render();
       }
     };
@@ -1107,6 +1292,11 @@
     if (!target) return;
 
     const action = target.dataset.action;
+
+    if (ADMIN_ACTIONS.has(action) && !hasAdminAccess()) {
+      notify("Acceso restringido al panel administrativo.", "error");
+      return;
+    }
 
     if (action === "navigate") {
       navigate(target.dataset.view, target.dataset.tab);
@@ -1173,6 +1363,9 @@
           const globalPet = state.pets.find((item) => item.id === pet.id);
           if (globalPet) {
             globalPet.status = normalized.status;
+          }
+          if (hasAdminAccess()) {
+            updateAdminPetInState(normalized);
           }
           notify(pet.status === "lost" ? "Alerta de perdida activada." : "Mascota marcada a salvo.");
           render();
@@ -1333,21 +1526,45 @@
     }
   };
 
-  const render = () => {
-    if (state.loading) {
-      app.innerHTML = `
-        <main class="loading-shell">
-          <section class="surface-card"><div class="surface-body">
-            <h2 class="section-title" style="font-size:30px;">Cargando dashboard...</h2>
-            <p class="muted">Sincronizando datos con la base de datos.</p>
-          </div></section>
-        </main>
-      `;
+  const onInputChange = (event) => {
+    const target = event.target.closest("[data-action]");
+    if (!target) return;
+
+    const action = target.dataset.action;
+
+    if (action === "admin-users-search") {
+      state.adminUserSearch = String(target.value || "");
+      render();
       return;
     }
 
+    if (action === "admin-users-filter") {
+      state.adminUserFilter = String(target.value || "all");
+      render();
+      return;
+    }
+
+    if (action === "admin-users-sort") {
+      state.adminUserSort = String(target.value || "pending-first");
+      render();
+    }
+  };
+
+  const render = () => {
     const alertHtml = state.notification
       ? `<div class="alert ${state.notification.type || "success"}">${state.notification.message}</div>`
+      : "";
+
+    const globalLoader = state.bootstrapping || state.loading
+      ? `
+        <div class="global-loader" role="status" aria-live="polite" aria-label="Cargando contenido">
+          <div class="global-loader-card">
+            <img class="global-loader-logo" src="assets/images/horlogo.png" alt="PetTag" />
+            <div class="global-loader-spinner" aria-hidden="true"></div>
+            <div class="global-loader-text">Sincronizando informacion...</div>
+          </div>
+        </div>
+      `
       : "";
 
     const header = `
@@ -1369,7 +1586,7 @@
       </div>
     `;
 
-    app.innerHTML = `${alertHtml}${body}`;
+    app.innerHTML = `${alertHtml}${body}${globalLoader}`;
 
     if (state.activeTab === "alerts" && state.currentView === "owner-dashboard") {
       initMap();
@@ -1377,6 +1594,8 @@
   };
 
   app.addEventListener("click", onClick);
+  app.addEventListener("input", onInputChange);
+  app.addEventListener("change", onInputChange);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeQrPreview();

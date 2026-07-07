@@ -7,12 +7,48 @@
   const submitBtn = loginForm.querySelector("button[type='submit']");
   const configuredApiBase = String(window.PETTAG_CONFIG?.API_BASE_URL || "").trim();
   const apiBase = (configuredApiBase || localStorage.getItem("pettag_api_base") || "").trim().replace(/\/$/, "");
+  const REQUEST_TIMEOUT_MS = 15000;
   let authMode = "login";
+  let pendingGlobalLoads = 0;
 
   if (localStorage.getItem("pettag_token")) {
     window.location.replace("app.html");
     return;
   }
+
+  const ensureGlobalLoader = () => {
+    let loader = document.getElementById("globalLoader");
+    if (loader) return loader;
+
+    loader = document.createElement("div");
+    loader.id = "globalLoader";
+    loader.className = "global-loader";
+    loader.style.display = "none";
+    loader.setAttribute("role", "status");
+    loader.setAttribute("aria-live", "polite");
+    loader.setAttribute("aria-label", "Cargando contenido");
+    loader.innerHTML = `
+      <div class="global-loader-card">
+        <img class="global-loader-logo" src="assets/images/horlogo.png" alt="PetTag" />
+        <div class="global-loader-spinner" aria-hidden="true"></div>
+        <div class="global-loader-text">Sincronizando informacion...</div>
+      </div>
+    `;
+    document.body.appendChild(loader);
+    return loader;
+  };
+
+  const beginGlobalLoad = () => {
+    pendingGlobalLoads += 1;
+    const loader = ensureGlobalLoader();
+    loader.style.display = "grid";
+  };
+
+  const endGlobalLoad = () => {
+    pendingGlobalLoads = Math.max(0, pendingGlobalLoads - 1);
+    const loader = ensureGlobalLoader();
+    loader.style.display = pendingGlobalLoads > 0 ? "grid" : "none";
+  };
 
   const setLoading = (loading) => {
     submitBtn.disabled = loading;
@@ -95,17 +131,24 @@
 
     try {
       setLoading(true);
+      beginGlobalLoad();
       const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
       const payload = authMode === "register"
         ? { name, email, password, phone, district }
         : { email, password };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
       const response = await fetch(getApiUrl(endpoint), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      }).finally(() => {
+        clearTimeout(timeoutId);
       });
 
       const data = await response.json().catch(() => ({}));
@@ -133,9 +176,14 @@
       localStorage.setItem("pettag_token", data.token);
       window.location.replace("app.html");
       return;
-    } catch {
-      loginError.textContent = "No se pudo conectar con el backend.";
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        loginError.textContent = "La conexion tardo demasiado. Revisa API/Internet e intenta de nuevo.";
+      } else {
+        loginError.textContent = "No se pudo conectar con el backend.";
+      }
     } finally {
+      endGlobalLoad();
       if (!loginError.textContent || authMode === "login") {
         loginError.style.color = "";
       }
