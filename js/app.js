@@ -44,6 +44,10 @@
       allergies: "",
       careNotes: ""
     },
+    newPetPhotoPreview: "",
+    newPetPhotoFile: null,
+    editPetPhotoPreview: "",
+    editPetPhotoFile: null,
     tempPetEdit: {},
     pets: [],
     myPets: [],
@@ -106,6 +110,44 @@
     if (["lost", "perdida", "perdido", "missing"].includes(status)) return "lost";
     if (["safe", "a salvo", "asalvo", "ok"].includes(status)) return "safe";
     return "safe";
+  };
+
+  const MAX_PHOTO_FILE_SIZE = 10 * 1024 * 1024;
+
+  const readImageFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen seleccionada."));
+    reader.readAsDataURL(file);
+  });
+
+  const clearPhotoPreview = (kind) => {
+    const previewKey = kind === "edit" ? "editPetPhotoPreview" : "newPetPhotoPreview";
+    const fileKey = kind === "edit" ? "editPetPhotoFile" : "newPetPhotoFile";
+    state[previewKey] = "";
+    state[fileKey] = null;
+  };
+
+  const setPhotoPreview = async (kind, file) => {
+    const previewKey = kind === "edit" ? "editPetPhotoPreview" : "newPetPhotoPreview";
+    const fileKey = kind === "edit" ? "editPetPhotoFile" : "newPetPhotoFile";
+    state[previewKey] = "";
+    state[fileKey] = null;
+
+    if (file) {
+      const dataUrl = await readImageFileAsDataUrl(file);
+      state[previewKey] = dataUrl;
+      state[fileKey] = {
+        name: file.name,
+        type: file.type,
+        dataUrl
+      };
+    }
   };
 
   const isValidPhotoUrl = (value) => {
@@ -401,6 +443,16 @@
     return `${getApiUrl(`/api/public/qr/${encodeURIComponent(petId)}`)}`;
   };
 
+  const getPublicScanUrl = (pet) => {
+    if (!pet?.id) return "";
+    const params = new URLSearchParams({ s: String(pet.id).trim() });
+    const ownerId = String(pet.ownerId || "").trim();
+    if (ownerId) {
+      params.set("o", ownerId);
+    }
+    return `public-scan.html?${params.toString()}`;
+  };
+
   const openQrPreview = (petId) => {
     if (!petId) return;
     state.qrPreview = {
@@ -479,14 +531,6 @@
               ? `<div class="sidebar-nav-group"><div class="sidebar-section-title">Administracion</div><div class="sidebar-nav">${adminLinks.map(renderNavItem).join("")}</div><div class="muted">Solo visible para cuentas administradoras aprobadas.</div></div>`
               : ""}
 
-            <div class="sidebar-section-title">Simular lectura fisica</div>
-            <div class="scan-shortcuts">
-              ${state.pets
-                .filter((pet) => pet.ownerId === state.currentUser?.id)
-                .map((pet) => `<button class="shortcut-btn" data-action="scan" data-id="${pet.id}">Escanear ${e(pet.name)}</button>`)
-                .join("") || `<div class="muted">Sin mascotas registradas.</div>`}
-            </div>
-
             <button class="danger-btn logout-btn" data-action="logout">Cerrar sesion</button>
           </div>
           <div class="sidebar-footer">
@@ -531,15 +575,22 @@
                         <button class="ghost-btn" data-action="cancel-edit">Cancelar</button>
                       </div>
                       <div class="form-grid">
-                        <div><label>Nombre</label><input class="field" id="edit-name" value="${e(pet.name)}" /></div>
-                        <div><label>Tipo</label><input class="field" id="edit-type" value="${e(pet.type)}" /></div>
-                        <div><label>Raza</label><input class="field" id="edit-breed" value="${e(pet.breed)}" /></div>
-                        <div><label>Distrito</label><input class="field" id="edit-district" value="${e(pet.district)}" /></div>
+                        <div><label>Nombre</label><input class="field" id="edit-name" data-action="edit-name" value="${e(state.tempPetEdit.name || pet.name)}" /></div>
+                        <div><label>Tipo</label><input class="field" id="edit-type" data-action="edit-type" value="${e(state.tempPetEdit.type || pet.type)}" /></div>
+                        <div><label>Raza</label><input class="field" id="edit-breed" data-action="edit-breed" value="${e(state.tempPetEdit.breed || pet.breed)}" /></div>
+                        <div><label>Distrito</label><input class="field" id="edit-district" data-action="edit-district" value="${e(state.tempPetEdit.district || pet.district)}" /></div>
                       </div>
-                      <div class="row"><label>Foto URL</label><input class="field" id="edit-photo" placeholder="https://..." value="${e(pet.photo)}" /></div>
-                      <div class="row"><label>Vacunas (coma)</label><input class="field" id="edit-vaccines" value="${e(pet.vaccines.join(", "))}" /></div>
-                      <div class="row"><label>Alergias</label><input class="field" id="edit-allergies" value="${e(pet.allergies)}" /></div>
-                      <div class="row"><label>Cuidados</label><textarea id="edit-notes">${e(pet.careNotes)}</textarea></div>
+                      <div class="row"><label>Foto desde galería</label><input class="field" type="file" id="edit-photo-file" data-action="edit-photo-file" accept="image/*" /></div>
+                      <div class="photo-preview-shell">
+                        <span class="photo-preview-label">Vista previa</span>
+                        ${state.editPetPhotoPreview || pet.photo
+          ? `<img class="photo-preview-image" src="${e(state.editPetPhotoPreview || pet.photo)}" alt="Vista previa ${e(pet.name)}" />`
+          : `<div class="photo-preview-empty">Aun no eliges una imagen</div>`}
+                      </div>
+                      <div class="muted">Si no eliges una nueva imagen, se mantiene la actual.</div>
+                      <div class="row"><label>Vacunas (coma)</label><input class="field" id="edit-vaccines" data-action="edit-vaccines" value="${e((state.tempPetEdit.vaccines || pet.vaccines.join(", "))) }" /></div>
+                      <div class="row"><label>Alergias</label><input class="field" id="edit-allergies" data-action="edit-allergies" value="${e(state.tempPetEdit.allergies || pet.allergies)}" /></div>
+                      <div class="row"><label>Cuidados</label><textarea id="edit-notes" data-action="edit-notes">${e(state.tempPetEdit.careNotes || pet.careNotes)}</textarea></div>
                       <div class="actions">
                         <button class="action-btn" data-action="save-pet" data-id="${pet.id}">Guardar Cambios</button>
                       </div>
@@ -560,7 +611,7 @@
                     </div>
                     <div class="actions">
                       ${isOwner ? `<button class="secondary-btn" data-action="edit-pet" data-id="${pet.id}">Editar Perfil</button>` : ""}
-                      ${isOwner ? `<button class="action-btn" data-action="scan" data-id="${pet.id}">Escanear Placa</button>` : ""}
+                      ${isOwner ? `<button class="action-btn" data-action="scan" data-id="${pet.id}">Abrir Vista Publica QR</button>` : ""}
                     </div>
                   `
                 }
@@ -879,15 +930,22 @@
       <h2 class="section-title section-title-md">Inscribir un Nuevo Collar QR</h2>
       <p class="section-desc">Genera la ficha tecnica y asocia un codigo estatico numerico para la placa de tu mascota.</p>
       <div class="form-grid row">
-        <div><label>Nombre *</label><input class="field" id="new-name" value="${e(state.newPet.name)}" /></div>
-        <div><label>Especie</label><select id="new-type"><option ${state.newPet.type === "Perro" ? "selected" : ""}>Perro</option><option ${state.newPet.type === "Gato" ? "selected" : ""}>Gato</option><option ${state.newPet.type === "Otro" ? "selected" : ""}>Otro</option></select></div>
-        <div><label>Raza</label><input class="field" id="new-breed" value="${e(state.newPet.breed)}" /></div>
-        <div><label>Distrito</label><input class="field" id="new-district" value="${e(state.newPet.district)}" /></div>
+        <div><label>Nombre *</label><input class="field" id="new-name" data-action="new-name" value="${e(state.newPet.name)}" /></div>
+        <div><label>Especie</label><select id="new-type" data-action="new-type"><option ${state.newPet.type === "Perro" ? "selected" : ""}>Perro</option><option ${state.newPet.type === "Gato" ? "selected" : ""}>Gato</option><option ${state.newPet.type === "Otro" ? "selected" : ""}>Otro</option></select></div>
+        <div><label>Raza</label><input class="field" id="new-breed" data-action="new-breed" value="${e(state.newPet.breed)}" /></div>
+        <div><label>Distrito</label><input class="field" id="new-district" data-action="new-district" value="${e(state.newPet.district)}" /></div>
       </div>
-      <div class="row"><label>Foto URL</label><input class="field" id="new-photo" placeholder="https://..." value="${e(state.newPet.photo)}" /></div>
-      <div class="row"><label>Vacunas (coma)</label><input class="field" id="new-vaccines" value="${e(state.newPet.vaccines)}" /></div>
-      <div class="row"><label>Alergias</label><input class="field" id="new-allergies" value="${e(state.newPet.allergies)}" /></div>
-      <div class="row"><label>Cuidados</label><textarea id="new-notes">${e(state.newPet.careNotes)}</textarea></div>
+      <div class="row"><label>Foto desde galería</label><input class="field" type="file" id="new-photo-file" data-action="new-photo-file" accept="image/*" /></div>
+      <div class="photo-preview-shell">
+        <span class="photo-preview-label">Vista previa</span>
+        ${state.newPetPhotoPreview
+          ? `<img class="photo-preview-image" src="${e(state.newPetPhotoPreview)}" alt="Vista previa nueva mascota" />`
+          : `<div class="photo-preview-empty">Aun no eliges una imagen</div>`}
+      </div>
+      <div class="muted">Selecciona una imagen desde tu dispositivo. Se sube al storage automáticamente.</div>
+      <div class="row"><label>Vacunas (coma)</label><input class="field" id="new-vaccines" data-action="new-vaccines" value="${e(state.newPet.vaccines)}" /></div>
+      <div class="row"><label>Alergias</label><input class="field" id="new-allergies" data-action="new-allergies" value="${e(state.newPet.allergies)}" /></div>
+      <div class="row"><label>Cuidados</label><textarea id="new-notes" data-action="new-notes">${e(state.newPet.careNotes)}</textarea></div>
       <div class="actions"><button class="action-btn" data-action="create-pet">Generar Registro QR</button></div>
     </div></section>
   `;
@@ -1119,26 +1177,35 @@
     if (!pet) return;
 
     const payload = {
-      name: document.getElementById("edit-name").value.trim(),
-      type: document.getElementById("edit-type").value.trim(),
-      breed: document.getElementById("edit-breed").value.trim(),
-      district: document.getElementById("edit-district").value.trim(),
-      photo: normalizePetPhoto(document.getElementById("edit-photo").value),
-      vaccines: document
-      .getElementById("edit-vaccines")
-      .value.split(",")
+      name: String(state.tempPetEdit.name || "").trim(),
+      type: String(state.tempPetEdit.type || "").trim(),
+      breed: String(state.tempPetEdit.breed || "").trim(),
+      district: String(state.tempPetEdit.district || "").trim(),
+      vaccines: String(state.tempPetEdit.vaccines || "")
+      .split(",")
       .map((v) => v.trim())
       .filter(Boolean),
-      allergies: document.getElementById("edit-allergies").value.trim(),
-      care_notes: document.getElementById("edit-notes").value.trim()
+      allergies: String(state.tempPetEdit.allergies || "").trim(),
+      care_notes: String(state.tempPetEdit.careNotes || "").trim()
     };
 
-    if (!isValidPhotoUrl(payload.photo)) {
-      notify("La foto debe ser una URL valida (http/https).", "error");
-      return;
-    }
+    const photoFile = state.editPetPhotoFile;
 
     try {
+      if (photoFile && !String(photoFile.type || "").startsWith("image/")) {
+        notify("La foto debe ser una imagen valida.", "error");
+        return;
+      }
+
+      if (photoFile && String(photoFile.dataUrl || "").length > 15 * 1024 * 1024) {
+        notify("La imagen supera 10 MB. Usa una foto mas ligera.", "error");
+        return;
+      }
+
+      if (photoFile) {
+        payload.photoFile = photoFile;
+      }
+
       const data = await request(`/api/owner/pets/${encodeURIComponent(petId)}`, {
         method: "PUT",
         body: payload
@@ -1149,6 +1216,7 @@
       const globalIndex = state.pets.findIndex((item) => item.id === petId);
       if (globalIndex >= 0) state.pets[globalIndex] = { ...state.pets[globalIndex], ...updated };
       state.editingPetId = null;
+      clearPhotoPreview("edit");
       notify("Ficha de mascota actualizada.");
       render();
     } catch (error) {
@@ -1157,30 +1225,34 @@
   };
 
   const createPet = async () => {
-    const name = document.getElementById("new-name").value.trim();
+    const name = String(state.newPet.name || "").trim();
     if (!name) {
       notify("El nombre es obligatorio.", "error");
       return;
     }
 
-    const type = document.getElementById("new-type").value;
-    const breed = document.getElementById("new-breed").value.trim() || "Mestizo";
-    const district = document.getElementById("new-district").value.trim() || "Miraflores";
-    const photo = normalizePetPhoto(document.getElementById("new-photo").value);
-
-    if (!isValidPhotoUrl(photo)) {
-      notify("La foto debe ser una URL valida (http/https).", "error");
-      return;
-    }
-    const vaccines = document
-      .getElementById("new-vaccines")
-      .value.split(",")
+    const type = String(state.newPet.type || "Perro");
+    const breed = String(state.newPet.breed || "").trim() || "Mestizo";
+    const district = String(state.newPet.district || "").trim() || "Miraflores";
+    const photoFile = state.newPetPhotoFile;
+    const vaccinesList = String(state.newPet.vaccines || "")
+      .split(",")
       .map((v) => v.trim())
       .filter(Boolean);
 
     const newId = Math.floor(100000 + Math.random() * 900000).toString();
 
     try {
+      if (photoFile && !String(photoFile.type || "").startsWith("image/")) {
+        notify("La foto debe ser una imagen valida.", "error");
+        return;
+      }
+
+      if (photoFile && String(photoFile.dataUrl || "").length > 15 * 1024 * 1024) {
+        notify("La imagen supera 10 MB. Usa una foto mas ligera.", "error");
+        return;
+      }
+
       const data = await request("/api/owner/pets", {
         method: "POST",
         body: {
@@ -1189,10 +1261,10 @@
           type,
           breed,
           district,
-          photo,
-          vaccines,
-          allergies: document.getElementById("new-allergies").value.trim() || "Ninguna registrada.",
-          care_notes: document.getElementById("new-notes").value.trim() || "Sin notas especiales.",
+          ...(photoFile ? { photoFile } : {}),
+          vaccines: vaccinesList,
+          allergies: String(state.newPet.allergies || "").trim() || "Ninguna registrada.",
+          care_notes: String(state.newPet.careNotes || "").trim() || "Sin notas especiales.",
           status: "safe"
         }
       });
@@ -1210,6 +1282,7 @@
         allergies: "",
         careNotes: ""
       };
+      clearPhotoPreview("new");
 
       state.activeTab = "pets";
       notify(`Mascota registrada. ID ${newId}`);
@@ -1316,10 +1389,16 @@
     }
 
     if (action === "scan") {
-      state.selectedPetId = target.dataset.id;
-      state.currentView = "finder-view";
+      const pet = state.myPets.find((p) => p.id === target.dataset.id);
+      if (!pet) {
+        notify("No se encontro la mascota para abrir la vista publica.", "error");
+        return;
+      }
+
+      const publicUrl = getPublicScanUrl(pet);
+      window.open(publicUrl, "_blank", "noopener");
       state.sidebarOpen = false;
-      notify("PetTag detectado.", "warning");
+      notify("Vista publica abierta en una nueva pestana.");
       render();
       return;
     }
@@ -1439,13 +1518,28 @@
         notify("Solo puedes editar tus propias mascotas.", "warning");
         return;
       }
+      clearPhotoPreview("edit");
       state.editingPetId = target.dataset.id;
+      const pet = state.myPets.find((item) => item.id === target.dataset.id);
+      state.tempPetEdit = pet
+        ? {
+            name: pet.name || "",
+            type: pet.type || "",
+            breed: pet.breed || "",
+            district: pet.district || "",
+            vaccines: Array.isArray(pet.vaccines) ? pet.vaccines.join(", ") : "",
+            allergies: pet.allergies || "",
+            careNotes: pet.careNotes || ""
+          }
+        : {};
       render();
       return;
     }
 
     if (action === "cancel-edit") {
       state.editingPetId = null;
+      state.tempPetEdit = {};
+      clearPhotoPreview("edit");
       render();
       return;
     }
@@ -1547,6 +1641,74 @@
     if (action === "admin-users-sort") {
       state.adminUserSort = String(target.value || "pending-first");
       render();
+      return;
+    }
+
+    const newPetFields = new Set(["new-name", "new-type", "new-breed", "new-district", "new-vaccines", "new-allergies", "new-notes"]);
+    if (newPetFields.has(action)) {
+      const nextValue = target.tagName === "SELECT" ? String(target.value || "") : String(target.value || "");
+      state.newPet = { ...state.newPet, [
+        action === "new-name" ? "name" :
+        action === "new-type" ? "type" :
+        action === "new-breed" ? "breed" :
+        action === "new-district" ? "district" :
+        action === "new-vaccines" ? "vaccines" :
+        action === "new-allergies" ? "allergies" : "careNotes"
+      ]: nextValue };
+      return;
+    }
+
+    const editPetFields = new Set(["edit-name", "edit-type", "edit-breed", "edit-district", "edit-vaccines", "edit-allergies", "edit-notes"]);
+    if (editPetFields.has(action)) {
+      const nextValue = String(target.value || "");
+      state.tempPetEdit = {
+        ...state.tempPetEdit,
+        [
+          action === "edit-name" ? "name" :
+          action === "edit-type" ? "type" :
+          action === "edit-breed" ? "breed" :
+          action === "edit-district" ? "district" :
+          action === "edit-vaccines" ? "vaccines" :
+          action === "edit-allergies" ? "allergies" : "careNotes"
+        ]: nextValue
+      };
+      return;
+    }
+
+    if (action === "new-photo-file" || action === "edit-photo-file") {
+      const file = target.files?.[0] || null;
+      const kind = action === "edit-photo-file" ? "edit" : "new";
+
+      if (!file) {
+        clearPhotoPreview(kind);
+        render();
+        return;
+      }
+
+      if (!String(file.type || "").startsWith("image/")) {
+        notify("La foto debe ser una imagen valida.", "error");
+        target.value = "";
+        clearPhotoPreview(kind);
+        render();
+        return;
+      }
+
+      if (file.size > MAX_PHOTO_FILE_SIZE) {
+        notify("La imagen supera 10 MB. Usa una foto mas ligera.", "error");
+        target.value = "";
+        clearPhotoPreview(kind);
+        render();
+        return;
+      }
+
+      setPhotoPreview(kind, file)
+        .then(() => render())
+        .catch((error) => {
+          notify(error.message || "No se pudo leer la imagen seleccionada.", "error");
+          target.value = "";
+          clearPhotoPreview(kind);
+          render();
+        });
     }
   };
 

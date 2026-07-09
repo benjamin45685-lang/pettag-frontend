@@ -924,6 +924,48 @@ select:focus {
   box-shadow: 0 0 0 4px rgba(92, 125, 70, 0.12);
 }
 
+.photo-preview-shell {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px dashed rgba(171, 194, 138, 0.55);
+  background: linear-gradient(180deg, rgba(248, 251, 246, 0.96) 0%, rgba(237, 243, 232, 0.96) 100%);
+}
+
+.photo-preview-label {
+  display: inline-flex;
+  margin-bottom: 10px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.photo-preview-image {
+  width: 100%;
+  max-width: 220px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 18px;
+  border: 1px solid rgba(171, 194, 138, 0.35);
+  box-shadow: 0 12px 24px rgba(33, 50, 19, 0.12);
+  background: #fff;
+}
+
+.photo-preview-empty {
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 label {
   display: block;
   margin-bottom: 7px;
@@ -1378,6 +1420,355 @@ textarea {
   margin: 10px 0 0;
   color: var(--danger);
   font-size: 13px;
+}
+
+.public-scan-page {
+  padding: 18px;
+  align-items: start;
+}
+
+.public-scan-card {
+  position: relative;
+  overflow: hidden;
+  width: min(100%, 620px);
+  border-radius: 20px;
+  border: 1px solid #dbe3d4;
+  background: #f8faf8;
+  box-shadow: 0 18px 36px rgba(31, 47, 19, 0.16);
+}
+
+.public-scan-card .login-logo {
+  width: 118px;
+  margin: 8px 0 6px;
+}
+
+.public-scan-card h1 {
+  margin-top: 0;
+}
+
+.public-scan-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 5px;
+  background: linear-gradient(90deg, #f1893f 0%, #dc4b41 100%);
+}
+
+.public-scan-lead {
+  margin-bottom: 14px;
+  max-width: 46ch;
+  color: #3e4a59;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.scan-state {
+  min-height: 44px;
+  margin: 0 0 12px;
+  padding: 11px 12px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.scan-state::before {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0;
+  flex: 0 0 auto;
+}
+
+.scan-state.state-info {
+  border-color: #bcd0ea;
+  background: #eaf2fb;
+  color: #1e3f73;
+}
+
+.scan-state.state-info::before {
+  content: "";
+  background: #4f89d7;
+}
+
+.scan-state.state-success {
+  border-color: #bcd0ea;
+  background: #eaf2fb;
+  color: #1e3f73;
+}
+
+.scan-state.state-success::before {
+  content: "";
+  background: #4f89d7;
+}
+
+.scan-state.state-danger {
+  border-color: #f3bcc7;
+  background: #fff2f4;
+  color: #9f1239;
+}
+
+.scan-state.state-danger::before {
+  content: "";
+  background: #be123c;
+}
+
+.public-pet-card {
+  border-radius: 12px;
+  border: 1px solid #d8ddd7;
+  box-shadow: none;
+  background: #fcfdfc;
+}
+
+.public-pet-body {
+  padding: 14px;
+}
+
+.public-pet-header-v2 {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e7e1;
+}
+
+.public-photo-shell {
+  position: relative;
+}
+
+.public-pet-photo {
+  width: 118px;
+  height: 118px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 2px solid #ecf1ea;
+  box-shadow: 0 6px 14px rgba(31, 47, 19, 0.2);
+}
+
+.public-photo-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #e94949 0%, #cf2d2d 100%);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+
+.public-pet-name {
+  margin: 0;
+  font-size: 40px;
+  line-height: 1.02;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+}
+
+.public-pet-type {
+  margin: 0;
+  color: #5e6875;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.public-status-chip {
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.public-status-chip.safe {
+  background: #e8f6ed;
+  color: #1f7a44;
+}
+
+.public-status-chip.lost {
+  background: linear-gradient(135deg, #ef4343 0%, #d82e2e 100%);
+  color: #fff;
+}
+
+.public-info-stack {
+  margin-top: 0;
+  display: grid;
+  gap: 0;
+}
+
+.public-info-row {
+  padding: 10px 0;
+  border-bottom: 1px solid #e2e7e1;
+}
+
+.public-info-row:last-child {
+  border-bottom: 0;
+}
+
+.public-info-row.compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.public-info-row.blocky {
+  display: block;
+}
+
+.public-info-label {
+  margin: 0;
+  color: #6a7584;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.public-info-value {
+  margin: 0;
+  color: #202b3d;
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+}
+
+.public-info-value.align-right {
+  text-align: right;
+}
+
+.public-info-value.is-danger {
+  color: #b3261e;
+}
+
+.public-info-value.is-safe {
+  color: #1d6a3f;
+}
+
+.public-section-block {
+  margin-top: 12px;
+}
+
+.public-section-title {
+  margin: 0 0 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #dde3dd;
+  color: #7b8593;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.public-chip-row {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.public-chip {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #edf1f7;
+  color: #465367;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.public-chip.muted-chip {
+  color: #64748b;
+}
+
+.public-owner-box {
+  margin-top: 14px;
+  padding: 10px 12px 12px;
+  border-radius: 9px;
+  background: #f6f8f6;
+  border: 1px solid #dbe2da;
+}
+
+.public-owner-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.public-owner-title {
+  margin: 0;
+  color: #6d7786;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.public-owner-name {
+  margin: 3px 0 0;
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.public-owner-phone {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #d6e0d1;
+  background: #fefefe;
+  font-size: 13px;
+  font-weight: 800;
+  color: #648253;
+}
+
+.public-owner-phone::before {
+  content: "\260E";
+  font-size: 14px;
+}
+
+.public-owner-contact-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.scan-share-btn {
+  margin-top: 14px;
+  min-height: 48px;
+  border-radius: 8px;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0;
+  background: linear-gradient(180deg, #648d4d 0%, #567b43 100%);
+  box-shadow: 0 10px 22px rgba(44, 67, 33, 0.24);
+}
+
+.scan-share-btn::before {
+  content: "\1F4CD";
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+.scan-share-btn:disabled {
+  opacity: 0.72;
 }
 
 .landing-page {
@@ -1889,5 +2280,69 @@ textarea {
   .landing-actions .secondary-btn {
     min-width: 0;
     width: 100%;
+  }
+
+  .public-scan-page {
+    padding: 12px;
+    place-items: stretch;
+  }
+
+  .public-scan-card {
+    width: 100%;
+    border-radius: 18px;
+    padding: 18px;
+  }
+
+  .scan-state {
+    font-size: 13px;
+    padding: 10px;
+  }
+
+  .scan-state::before {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+  }
+
+  .public-pet-body {
+    padding: 14px;
+  }
+
+  .public-pet-header-v2 {
+    gap: 7px;
+  }
+
+  .public-pet-photo {
+    width: 118px;
+    height: 118px;
+  }
+
+  .public-pet-name {
+    font-size: 34px;
+  }
+
+  .public-info-stack {
+    gap: 0;
+  }
+
+  .public-info-row {
+    padding: 9px 0 10px;
+  }
+
+  .public-info-value {
+    font-size: 17px;
+  }
+
+  .public-owner-name {
+    font-size: 17px;
+  }
+
+  .public-owner-row {
+    align-items: center;
+  }
+
+  .scan-share-btn {
+    font-size: 17px;
+    min-height: 46px;
   }
 }

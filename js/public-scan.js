@@ -15,6 +15,8 @@
   const stateEl = document.getElementById("scanState");
   const petCard = document.getElementById("petCard");
   const shareBtn = document.getElementById("shareBtn");
+  const SHARE_BTN_DEFAULT = "Compartir mi ubicacion";
+  const SHARE_BTN_LOADING = "Enviando ubicacion...";
   let pendingGlobalLoads = 0;
 
   const e = (value) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({
@@ -56,6 +58,13 @@
     return "safe";
   };
 
+  const buildWhatsAppUrl = (phone) => {
+    const digits = String(phone || "").replace(/\D/g, "");
+    if (!digits) return "";
+    const normalizedDigits = digits.startsWith("51") ? digits : `51${digits}`;
+    return `https://wa.me/${normalizedDigits}`;
+  };
+
   const getApiUrl = (path) => `${apiBase}${path}`;
 
   const ensureGlobalLoader = () => {
@@ -92,9 +101,14 @@
     loader.style.display = pendingGlobalLoads > 0 ? "grid" : "none";
   };
 
-  const setState = (message, isError = false) => {
+  const setState = (message, isError = false, tone = "info") => {
     stateEl.textContent = message;
-    stateEl.style.color = isError ? "#9d2f2f" : "";
+    const finalTone = isError ? "danger" : tone;
+    stateEl.className = `scan-state state-${finalTone}`;
+  };
+
+  const setShareBtnLabel = (loading = false) => {
+    shareBtn.textContent = loading ? SHARE_BTN_LOADING : SHARE_BTN_DEFAULT;
   };
 
   const renderPet = (payload) => {
@@ -104,44 +118,85 @@
     const hasPhoto = Boolean(photo);
     const status = normalizePetStatus(pet.status);
     const statusLabel = status === "lost" ? "Perdida" : "A salvo";
+    const statusCapsuleLabel = status === "lost" ? "Reporte activo" : "Lectura segura";
     const vaccines = Array.isArray(pet.vaccines) ? pet.vaccines.filter(Boolean) : [];
     const allergies = String(pet.allergies || "").trim() || "Sin registro";
     const careNotes = String(pet.careNotes || pet.care_notes || "").trim() || "Sin notas especiales";
-    const phoneHtml = status === "lost"
-      ? `<p><strong>Telefono:</strong> ${e(owner.phone || "No disponible")}</p>`
-      : `<p class="muted">Telefono oculto por privacidad (solo visible cuando la mascota esta perdida).</p>`;
+    const vaccinesHtml = vaccines.length
+      ? vaccines.map((vaccine) => `<span class="public-chip">${e(vaccine)}</span>`).join("")
+      : '<span class="public-chip muted-chip">Sin registro</span>';
+    const whatsappUrl = String(payload?.links?.whatsapp || "").trim() || buildWhatsAppUrl(owner.phone);
+    const phoneHtml = status === "lost" && whatsappUrl
+      ? `<a class="public-owner-phone public-owner-whatsapp" href="${e(whatsappUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir chat de WhatsApp con ${e(owner.name || 'el propietario')}"><img src="/assets/images/WhatsApp.png" alt="WhatsApp" aria-hidden="true" /></a>`
+      : `<p class="muted">Telefono oculto por privacidad.</p>`;
     const photoHtml = hasPhoto
-      ? `<img class="pet-photo" src="${e(photo)}" alt="${e(pet.name || "Mascota")}" data-role="pet-photo" />`
-      : `<div class="pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>`;
+      ? `<img class="public-pet-photo" src="${e(photo)}" alt="${e(pet.name || "Mascota")}" data-role="pet-photo" />`
+      : `<div class="public-pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>`;
 
     petCard.innerHTML = `
-      <div class="card-body">
-        <div class="pet-head" style="margin-bottom: 12px;">
-          ${photoHtml}
-          <div class="pet-copy">
-            <h2 style="margin-top: 0; margin-bottom: 2px;">${e(pet.name || "Mascota")}</h2>
-            <p class="muted" style="margin: 0;">${e(pet.type || "")} ${pet.breed ? `· ${e(pet.breed)}` : ""}</p>
+      <div class="public-pet-body">
+        <div class="public-pet-header-v2">
+          <div class="public-photo-shell">
+            ${photoHtml}
+            ${status === "lost" ? '<span class="public-photo-badge">PERDIDA</span>' : ""}
+          </div>
+          <h2 class="public-pet-name">${e(pet.name || "Mascota")}</h2>
+          <p class="public-pet-type">${e(pet.type || "Mascota")} ${pet.breed ? `· ${e(pet.breed)}` : ""}</p>
+          <span class="public-status-chip ${status}">${e(statusCapsuleLabel)}</span>
+        </div>
+
+        <section class="public-section-block">
+          <h3 class="public-section-title">Informacion general</h3>
+          <div class="public-info-stack">
+            <div class="public-info-row compact">
+              <p class="public-info-label">Distrito visto:</p>
+              <p class="public-info-value align-right">${e(pet.district || "No definido")}</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="public-section-block">
+          <h3 class="public-section-title">Datos medicos</h3>
+          <div class="public-info-stack">
+            <div class="public-info-row blocky">
+              <p class="public-info-label">Vacunas:</p>
+              <div class="public-chip-row">${vaccinesHtml}</div>
+            </div>
+            <div class="public-info-row blocky">
+              <p class="public-info-label">Alergias:</p>
+              <p class="public-info-value">${e(allergies)}</p>
+            </div>
+            <div class="public-info-row blocky">
+              <p class="public-info-label">Cuidados especiales:</p>
+              <p class="public-info-value">${e(careNotes)}</p>
+            </div>
+          </div>
+        </section>
+
+        <div class="public-owner-box">
+          <h3 class="public-section-title">Informacion de contacto</h3>
+          <div class="public-owner-row">
+            <div>
+              <p class="public-owner-title">Propietario</p>
+              <p class="public-owner-name">${e(owner.name || "No disponible")}</p>
+            </div>
+            <div class="public-owner-contact-wrap">
+              ${phoneHtml}
+            </div>
           </div>
         </div>
-        <p><strong>Distrito:</strong> ${e(pet.district || "No definido")}</p>
-        <p><strong>Estado:</strong> ${e(statusLabel)}</p>
-        <p><strong>Vacunas:</strong> ${vaccines.length ? e(vaccines.join(", ")) : "Sin registro"}</p>
-        <p><strong>Alergias:</strong> ${e(allergies)}</p>
-        <p><strong>Cuidados:</strong> ${e(careNotes)}</p>
-        <hr style="opacity:.2;" />
-        <p><strong>Propietario:</strong> ${e(owner.name || "No disponible")}</p>
-        ${phoneHtml}
       </div>
     `;
 
     const photoEl = petCard.querySelector('[data-role="pet-photo"]');
     if (photoEl) {
       photoEl.addEventListener("error", () => {
-        photoEl.outerHTML = '<div class="pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>';
+        photoEl.outerHTML = '<div class="public-pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>';
       }, { once: true });
     }
 
     petCard.style.display = "block";
+    return status;
   };
 
   const postScan = async (latitude, longitude, accuracy, device) => {
@@ -177,18 +232,18 @@
 
     beginGlobalLoad();
     shareBtn.disabled = true;
-    shareBtn.textContent = "Enviando ubicacion...";
+    setShareBtnLabel(true);
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
           const { latitude, longitude, accuracy } = position.coords;
           await postScan(latitude, longitude, accuracy ?? null, `PublicScan (${(accuracy || 0).toFixed(0)}m)`);
-          setState("Ubicacion enviada correctamente. Gracias por ayudar.");
+          setState("Ubicacion enviada correctamente. Gracias por ayudar.", false, "success");
         } catch (error) {
           setState(error.message || "No se pudo enviar la ubicacion.", true);
           shareBtn.disabled = false;
-          shareBtn.textContent = "Compartir mi ubicacion";
+          setShareBtnLabel(false);
         } finally {
           endGlobalLoad();
         }
@@ -196,11 +251,11 @@
       async () => {
         try {
           await postScan(-12.0464, -77.0428, null, "PublicScan fallback");
-          setState("No se pudo leer GPS, se envio una ubicacion aproximada.");
+          setState("No se pudo leer GPS, se envio una ubicacion aproximada.", false, "danger");
         } catch (error) {
           setState(error.message || "No se pudo enviar la ubicacion.", true);
           shareBtn.disabled = false;
-          shareBtn.textContent = "Compartir mi ubicacion";
+          setShareBtnLabel(false);
         } finally {
           endGlobalLoad();
         }
@@ -217,7 +272,7 @@
 
     try {
       beginGlobalLoad();
-      setState("Cargando informacion de la mascota...");
+      setState("Cargando informacion de la mascota...", false, "info");
       const ownerQuery = ownerId ? `?owner=${encodeURIComponent(ownerId)}` : "";
       const response = await fetch(getApiUrl(`/api/public/pets/${encodeURIComponent(petId)}${ownerQuery}`));
       const data = await response.json().catch(() => ({}));
@@ -226,9 +281,10 @@
         throw new Error(data.error || "No se pudo cargar la mascota.");
       }
 
-      renderPet(data);
-      setState("Mascota verificada. Puedes compartir tu ubicacion.");
+      const petStatus = renderPet(data);
+      setState("Mascota verificada en el sistema. Puedes compartir tu ubicacion de forma segura.", false, "info");
       shareBtn.disabled = false;
+      setShareBtnLabel(false);
     } catch (error) {
       setState(error.message || "No se pudo cargar el escaneo.", true);
     } finally {
@@ -236,6 +292,7 @@
     }
   };
 
+  setShareBtnLabel(false);
   shareBtn.addEventListener("click", shareLocation);
   boot();
 })();
