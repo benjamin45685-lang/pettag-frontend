@@ -66,7 +66,14 @@
     adminUserFilter: "all",
     adminUserSort: "pending-first",
     selectedPetId: "",
-    qrPreview: null
+    qrPreview: null,
+    qrScannerOpen: false,
+    qrScannerStatus: "",
+    qrScannerTone: "info",
+    qrScannerStream: null,
+    qrScannerRafId: null,
+    qrScannerDetector: null,
+    qrScannerBusy: false
   };
 
   const ADMIN_TABS = new Set(["admin-overview", "admin-users", "admin-pets", "admin-scans"]);
@@ -125,6 +132,22 @@
     reader.onerror = () => reject(new Error("No se pudo leer la imagen seleccionada."));
     reader.readAsDataURL(file);
   });
+
+  const renderPhotoPicker = ({
+    inputId,
+    action,
+    fileName,
+    hint = "PNG, JPG o WEBP hasta 10 MB"
+  }) => `
+    <label class="file-picker" for="${inputId}">
+      <span class="file-picker-button">Elegir imagen</span>
+      <span class="file-picker-meta">
+        <span class="file-picker-name">${e(fileName || "Ningun archivo seleccionado")}</span>
+        <span class="file-picker-hint">${e(hint)}</span>
+      </span>
+    </label>
+    <input class="file-picker-input" type="file" id="${inputId}" data-action="${action}" accept="image/*" />
+  `;
 
   const clearPhotoPreview = (kind) => {
     const previewKey = kind === "edit" ? "editPetPhotoPreview" : "newPetPhotoPreview";
@@ -235,6 +258,15 @@
     status: normalizePetStatus(pet.status)
   });
 
+  const enrichOwnedPet = (pet, ownerProfile = {}) => {
+    const normalized = normalizePet(pet);
+    return {
+      ...normalized,
+      ownerName: normalized.ownerName || String(ownerProfile.name || "").trim(),
+      ownerDistrict: normalized.ownerDistrict || String(ownerProfile.district || "").trim()
+    };
+  };
+
   const normalizeAdminUser = (user) => ({
     id: String(user.id || "").trim(),
     email: String(user.email || "").trim(),
@@ -313,7 +345,7 @@
       district: payload.profile?.district || ""
     };
     state.tempOwnerProfile = { ...state.ownerProfile };
-    state.myPets = Array.isArray(payload.pets) ? payload.pets.map(normalizePet) : [];
+    state.myPets = Array.isArray(payload.pets) ? payload.pets.map((pet) => enrichOwnedPet(pet, state.ownerProfile)) : [];
     state.pets = [...state.myPets];
     const myPetsById = state.myPets.reduce((acc, pet) => {
       acc[pet.id] = pet;
@@ -394,11 +426,10 @@
 
       if (hasAdminAccess()) {
         await loadAdminDashboard();
-        mergePetsForVisibility(state.adminPets);
+        state.pets = [...state.myPets];
       } else {
         resetAdminState();
-        const allPetsData = await request("/api/pets").catch(() => ({ pets: [] }));
-        mergePetsForVisibility(allPetsData.pets);
+        state.pets = [...state.myPets];
       }
 
       ensureAllowedTab();
@@ -468,6 +499,185 @@
     render();
   };
 
+  const setQrScannerStatus = (message, tone = "info") => {
+    state.qrScannerStatus = String(message || "").trim();
+    state.qrScannerTone = tone;
+    render();
+  };
+
+  const stopQrScanner = () => {
+    if (state.qrScannerRafId) {
+      cancelAnimationFrame(state.qrScannerRafId);
+      state.qrScannerRafId = null;
+    }
+
+    if (state.qrScannerStream) {
+      state.qrScannerStream.getTracks().forEach((track) => track.stop());
+      state.qrScannerStream = null;
+    }
+
+    state.qrScannerDetector = null;
+    state.qrScannerBusy = false;
+  };
+
+  const closeQrScanner = ({ silent = false } = {}) => {
+    stopQrScanner();
+    state.qrScannerOpen = false;
+    state.qrScannerStatus = "";
+    state.qrScannerTone = "info";
+    if (!silent) {
+      render();
+    }
+  };
+
+  const resolveScannedQrTarget = (rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (!value) return null;
+
+    const isPetIdToken = (token) => /^[a-zA-Z0-9_-]{4,64}$/.test(String(token || "").trim());
+    const buildPublicUrl = (petId, ownerId = "") => {
+      const params = new URLSearchParams({ s: String(petId).trim() });
+      const owner = String(ownerId || "").trim();
+      if (owner) {
+        params.set("o", owner);
+      }
+      return `public-scan.html?${params.toString()}`;
+    };
+
+    try {
+      const parsed = new URL(value);
+      const pathParts = parsed.pathname.split("/").filter(Boolean);
+      const shortIndex = pathParts.findIndex((part) => String(part).toLowerCase() === "s");
+
+      if (shortIndex >= 0 && pathParts[shortIndex + 1]) {
+        const petId = decodeURIComponent(pathParts[shortIndex + 1] || "").trim();
+        const ownerId = decodeURIComponent(pathParts[shortIndex + 2] || "").trim();
+        if (isPetIdToken(petId)) {
+          return buildPublicUrl(petId, ownerId);
+        }
+      }
+
+      const petId = String(parsed.searchParams.get("s") || parsed.searchParams.get("scan") || "").trim();
+      const ownerId = String(parsed.searchParams.get("o") || parsed.searchParams.get("owner") || "").trim();
+      if (isPetIdToken(petId)) {
+        return buildPublicUrl(petId, ownerId);
+      }
+
+      if (["http:", "https:"].includes(parsed.protocol)) {
+        return parsed.toString();
+      }
+    } catch {
+      if (isPetIdToken(value)) {
+        return buildPublicUrl(value);
+      }
+    }
+
+    return null;
+  };
+
+  const attachQrScannerVideo = () => {
+    if (!state.qrScannerOpen || !state.qrScannerStream) return;
+    const video = document.getElementById("sidebar-qr-video");
+    if (!video) return;
+
+    if (video.srcObject !== state.qrScannerStream) {
+      video.srcObject = state.qrScannerStream;
+    }
+
+    video.muted = true;
+    video.playsInline = true;
+    video.play().catch(() => {});
+  };
+
+  const handleDetectedQr = (rawValue) => {
+    const targetUrl = resolveScannedQrTarget(rawValue);
+    if (!targetUrl) {
+      setQrScannerStatus("QR detectado, pero no es compatible con PetTag.", "warning");
+      return;
+    }
+
+    closeQrScanner({ silent: true });
+    state.sidebarOpen = false;
+    window.open(targetUrl, "_blank", "noopener");
+    notify("QR detectado. Abriendo ficha publica.");
+    render();
+  };
+
+  const scanQrFrame = async () => {
+    if (!state.qrScannerOpen || !state.qrScannerDetector) return;
+
+    const video = document.getElementById("sidebar-qr-video");
+    if (!video || video.readyState < 2) {
+      state.qrScannerRafId = requestAnimationFrame(scanQrFrame);
+      return;
+    }
+
+    if (state.qrScannerBusy) {
+      state.qrScannerRafId = requestAnimationFrame(scanQrFrame);
+      return;
+    }
+
+    state.qrScannerBusy = true;
+    try {
+      const barcodes = await state.qrScannerDetector.detect(video);
+      const detected = (barcodes || []).find((item) => String(item?.rawValue || "").trim());
+
+      if (detected?.rawValue) {
+        handleDetectedQr(detected.rawValue);
+        return;
+      }
+    } catch {
+      // Si detect() falla de forma puntual, mantenemos el ciclo para reintentar.
+    } finally {
+      state.qrScannerBusy = false;
+    }
+
+    state.qrScannerRafId = requestAnimationFrame(scanQrFrame);
+  };
+
+  const startQrScanner = async () => {
+    if (!state.qrScannerOpen) return;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setQrScannerStatus("Tu navegador no permite acceso a camara desde esta pagina.", "warning");
+      return;
+    }
+
+    if (typeof window.BarcodeDetector !== "function") {
+      setQrScannerStatus("Este navegador no soporta escaneo QR nativo. Prueba con Chrome o Edge actualizados.", "warning");
+      return;
+    }
+
+    stopQrScanner();
+
+    try {
+      state.qrScannerDetector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      state.qrScannerStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" }
+        },
+        audio: false
+      });
+
+      if (!state.qrScannerOpen) {
+        stopQrScanner();
+        return;
+      }
+
+      setQrScannerStatus("Camara activa. Apunta al QR para abrir la ficha publica.", "success");
+      attachQrScannerVideo();
+      state.qrScannerRafId = requestAnimationFrame(scanQrFrame);
+    } catch (error) {
+      const denied = String(error?.name || "").toLowerCase().includes("notallowed");
+      setQrScannerStatus(
+        denied
+          ? "Permiso de camara denegado. Habilitalo para escanear QR."
+          : "No se pudo iniciar la camara. Cierra otras apps que la esten usando e intenta de nuevo.",
+        "warning"
+      );
+    }
+  };
+
   const notify = (message, type = "success") => {
     state.notification = { message, type };
     render();
@@ -531,6 +741,26 @@
               ? `<div class="sidebar-nav-group"><div class="sidebar-section-title">Administracion</div><div class="sidebar-nav">${adminLinks.map(renderNavItem).join("")}</div><div class="muted">Solo visible para cuentas administradoras aprobadas.</div></div>`
               : ""}
 
+            <div class="sidebar-nav-group">
+              <div class="sidebar-section-title">Escaneo rapido</div>
+              <button class="nav-btn ${state.qrScannerOpen ? "active" : ""}" data-action="toggle-qr-scanner">
+                <span class="nav-label">
+                  <span class="nav-label-main"><span class="nav-icon">📷</span><span>Escanear QR</span></span>
+                </span>
+              </button>
+              ${state.qrScannerOpen
+                ? `
+                  <div class="sidebar-scanner">
+                    <div class="sidebar-scanner-preview">
+                      <video id="sidebar-qr-video" class="sidebar-scanner-video" autoplay muted playsinline></video>
+                    </div>
+                    <div class="sidebar-scanner-status ${e(state.qrScannerTone || "info")}">${e(state.qrScannerStatus || "Preparando camara...")}</div>
+                    <button class="secondary-btn sidebar-scanner-stop" data-action="toggle-qr-scanner">Cerrar escaner</button>
+                  </div>
+                `
+                : ""}
+            </div>
+
             <button class="danger-btn logout-btn" data-action="logout">Cerrar sesion</button>
           </div>
           <div class="sidebar-footer">
@@ -580,7 +810,15 @@
                         <div><label>Raza</label><input class="field" id="edit-breed" data-action="edit-breed" value="${e(state.tempPetEdit.breed || pet.breed)}" /></div>
                         <div><label>Distrito</label><input class="field" id="edit-district" data-action="edit-district" value="${e(state.tempPetEdit.district || pet.district)}" /></div>
                       </div>
-                      <div class="row"><label>Foto desde galería</label><input class="field" type="file" id="edit-photo-file" data-action="edit-photo-file" accept="image/*" /></div>
+                      <div class="row">
+                        <label>Foto desde galería</label>
+                        ${renderPhotoPicker({
+                          inputId: "edit-photo-file",
+                          action: "edit-photo-file",
+                          fileName: state.editPetPhotoFile?.name,
+                          hint: pet.photo ? "Reemplaza la foto actual si deseas actualizarla" : "PNG, JPG o WEBP hasta 10 MB"
+                        })}
+                      </div>
                       <div class="photo-preview-shell">
                         <span class="photo-preview-label">Vista previa</span>
                         ${state.editPetPhotoPreview || pet.photo
@@ -604,7 +842,7 @@
                       <div class="pet-copy">
                         <strong>${e(pet.name)}</strong>
                         <div class="muted">${e(pet.type)} · ${e(pet.breed)}</div>
-                        <div class="muted">Propietario: ${e(pet.ownerName || "No disponible")}</div>
+                        <div class="muted pet-owner-line">Propietario: ${e(pet.ownerName || "No disponible")}</div>
                         <div class="pet-district">📍 Distrito: ${e(pet.district)}</div>
                         <span class="pet-id">ID: ${e(pet.id)}</span>
                       </div>
@@ -851,6 +1089,7 @@
                 </div>
                 <div class="actions">
                   <button class="secondary-btn" data-action="admin-toggle-pet-status" data-id="${pet.id}" data-status="${pet.status === "lost" ? "safe" : "lost"}">${pet.status === "lost" ? "Marcar a salvo" : "Reportar perdida"}</button>
+                  <button class="action-btn" data-action="scan" data-id="${pet.id}">Abrir Vista Publica</button>
                   <button class="danger-btn" data-action="delete-pet" data-id="${pet.id}">Eliminar</button>
                 </div>
               </div>
@@ -935,7 +1174,14 @@
         <div><label>Raza</label><input class="field" id="new-breed" data-action="new-breed" value="${e(state.newPet.breed)}" /></div>
         <div><label>Distrito</label><input class="field" id="new-district" data-action="new-district" value="${e(state.newPet.district)}" /></div>
       </div>
-      <div class="row"><label>Foto desde galería</label><input class="field" type="file" id="new-photo-file" data-action="new-photo-file" accept="image/*" /></div>
+      <div class="row">
+        <label>Foto desde galería</label>
+        ${renderPhotoPicker({
+          inputId: "new-photo-file",
+          action: "new-photo-file",
+          fileName: state.newPetPhotoFile?.name
+        })}
+      </div>
       <div class="photo-preview-shell">
         <span class="photo-preview-label">Vista previa</span>
         ${state.newPetPhotoPreview
@@ -1133,6 +1379,7 @@
       notify("Acceso restringido al panel administrativo.", "error");
       return;
     }
+    closeQrScanner({ silent: true });
     state.currentView = view;
     state.activeTab = tab;
     state.sidebarOpen = false;
@@ -1169,7 +1416,7 @@
     }
 
     state.adminStats.lostPets = state.adminPets.filter((pet) => pet.status === "lost").length;
-    mergePetsForVisibility(hasAdminAccess() ? state.adminPets : state.pets);
+    state.pets = [...state.myPets];
   };
 
   const savePetEdit = async (petId) => {
@@ -1383,13 +1630,30 @@
     }
 
     if (action === "close-sidebar") {
+      closeQrScanner({ silent: true });
       state.sidebarOpen = false;
       render();
       return;
     }
 
+    if (action === "toggle-qr-scanner") {
+      if (state.qrScannerOpen) {
+        closeQrScanner();
+        return;
+      }
+
+      state.qrScannerOpen = true;
+      state.qrScannerStatus = "Preparando camara...";
+      state.qrScannerTone = "info";
+      render();
+      startQrScanner();
+      return;
+    }
+
     if (action === "scan") {
-      const pet = state.myPets.find((p) => p.id === target.dataset.id);
+      const pet = state.myPets.find((p) => p.id === target.dataset.id)
+        || state.adminPets.find((p) => p.id === target.dataset.id)
+        || state.pets.find((p) => p.id === target.dataset.id);
       if (!pet) {
         notify("No se encontro la mascota para abrir la vista publica.", "error");
         return;
@@ -1397,6 +1661,7 @@
 
       const publicUrl = getPublicScanUrl(pet);
       window.open(publicUrl, "_blank", "noopener");
+      closeQrScanner({ silent: true });
       state.sidebarOpen = false;
       notify("Vista publica abierta en una nueva pestana.");
       render();
@@ -1411,7 +1676,6 @@
     if (action === "refresh-admin") {
       loadAdminDashboard()
         .then(() => {
-          mergePetsForVisibility(state.adminPets);
           notify("Panel administrativo actualizado.");
           render();
         })
@@ -1750,6 +2014,10 @@
 
     app.innerHTML = `${alertHtml}${body}${globalLoader}`;
 
+    if (state.qrScannerOpen) {
+      attachQrScannerVideo();
+    }
+
     if (state.activeTab === "alerts" && state.currentView === "owner-dashboard") {
       initMap();
     }
@@ -1760,6 +2028,10 @@
   app.addEventListener("change", onInputChange);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (state.qrScannerOpen) {
+        closeQrScanner();
+        return;
+      }
       closeQrPreview();
     }
   });
