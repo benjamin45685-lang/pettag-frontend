@@ -15,8 +15,8 @@
   const stateEl = document.getElementById("scanState");
   const petCard = document.getElementById("petCard");
   const shareBtn = document.getElementById("shareBtn");
-  const SHARE_BTN_DEFAULT = "Compartir mi ubicacion";
-  const SHARE_BTN_LOADING = "Enviando ubicacion...";
+  const SHARE_BTN_DEFAULT = "COMPARTIR MI UBICACION";
+  const SHARE_BTN_LOADING = "ENVIANDO UBICACION...";
   let pendingGlobalLoads = 0;
 
   const e = (value) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({
@@ -118,7 +118,7 @@
     const hasPhoto = Boolean(photo);
     const status = normalizePetStatus(pet.status);
     const statusLabel = status === "lost" ? "Perdida" : "A salvo";
-    const statusCapsuleLabel = status === "lost" ? "Reporte activo" : "Lectura segura";
+    const statusCapsuleLabel = status === "lost" ? "Reporte activo" : "Mascota segura";
     const vaccines = Array.isArray(pet.vaccines) ? pet.vaccines.filter(Boolean) : [];
     const allergies = String(pet.allergies || "").trim() || "Sin registro";
     const careNotes = String(pet.careNotes || pet.care_notes || "").trim() || "Sin notas especiales";
@@ -193,6 +193,11 @@
       photoEl.addEventListener("error", () => {
         photoEl.outerHTML = '<div class="public-pet-photo is-empty pet-photo-placeholder" aria-label="Sin foto"><span>Sin foto</span></div>';
       }, { once: true });
+    }
+
+    const headerEl = petCard.querySelector(".public-pet-header-v2");
+    if (headerEl) {
+      headerEl.insertAdjacentElement("afterend", shareBtn);
     }
 
     petCard.style.display = "block";

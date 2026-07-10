@@ -4,6 +4,7 @@
   const configuredTimeZone = String(window.PETTAG_CONFIG?.TIME_ZONE || "America/Lima").trim() || "America/Lima";
   const apiBase = (configuredApiBase || localStorage.getItem("pettag_api_base") || "").trim().replace(/\/$/, "");
   const REQUEST_TIMEOUT_MS = 15000;
+  const AUTO_REFRESH_MS = 12000;
 
   if (!token) {
     window.location.replace("login.html");
@@ -73,7 +74,9 @@
     qrScannerStream: null,
     qrScannerRafId: null,
     qrScannerDetector: null,
-    qrScannerBusy: false
+    qrScannerBusy: false,
+    autoRefreshTimerId: null,
+    autoRefreshRunning: false
   };
 
   const ADMIN_TABS = new Set(["admin-overview", "admin-users", "admin-pets", "admin-scans"]);
@@ -399,6 +402,62 @@
     hydrateAdminDashboard(data);
   };
 
+  const refreshOwnerSnapshot = async () => {
+    const data = await request("/api/auth/me", { trackLoading: false });
+    hydrateDashboard(data);
+    ensureAllowedTab();
+  };
+
+  const refreshAdminSnapshot = async () => {
+    if (!hasAdminAccess()) return;
+    const data = await request("/api/admin/dashboard", { trackLoading: false });
+    hydrateAdminDashboard(data);
+  };
+
+  const canAutoRefresh = () => (
+    document.visibilityState === "visible"
+    && !state.qrScannerOpen
+    && !state.qrPreview
+    && !state.isEditingOwner
+    && !state.editingPetId
+    && state.pendingRequests === 0
+  );
+
+  const runAutoRefreshTick = async () => {
+    if (state.autoRefreshRunning || !canAutoRefresh()) return;
+
+    state.autoRefreshRunning = true;
+    try {
+      if (ADMIN_TABS.has(String(state.activeTab || "")) && hasAdminAccess()) {
+        await refreshAdminSnapshot();
+      } else {
+        await refreshOwnerSnapshot();
+      }
+      render();
+    } catch {
+      // Mantener el auto-refresh silencioso para no interrumpir al usuario.
+    } finally {
+      state.autoRefreshRunning = false;
+    }
+  };
+
+  const startAutoRefresh = () => {
+    if (state.autoRefreshTimerId) {
+      clearInterval(state.autoRefreshTimerId);
+      state.autoRefreshTimerId = null;
+    }
+
+    state.autoRefreshTimerId = setInterval(() => {
+      runAutoRefreshTick();
+    }, AUTO_REFRESH_MS);
+  };
+
+  const stopAutoRefresh = () => {
+    if (!state.autoRefreshTimerId) return;
+    clearInterval(state.autoRefreshTimerId);
+    state.autoRefreshTimerId = null;
+  };
+
   const mergePetsForVisibility = (allPets) => {
     if (!Array.isArray(allPets)) {
       state.pets = [...state.myPets];
@@ -577,7 +636,7 @@
 
   const attachQrScannerVideo = () => {
     if (!state.qrScannerOpen || !state.qrScannerStream) return;
-    const video = document.getElementById("sidebar-qr-video");
+    const video = document.getElementById("qr-scanner-video");
     if (!video) return;
 
     if (video.srcObject !== state.qrScannerStream) {
@@ -606,7 +665,7 @@
   const scanQrFrame = async () => {
     if (!state.qrScannerOpen || !state.qrScannerDetector) return;
 
-    const video = document.getElementById("sidebar-qr-video");
+    const video = document.getElementById("qr-scanner-video");
     if (!video || video.readyState < 2) {
       state.qrScannerRafId = requestAnimationFrame(scanQrFrame);
       return;
@@ -748,17 +807,6 @@
                   <span class="nav-label-main"><span class="nav-icon">📷</span><span>Escanear QR</span></span>
                 </span>
               </button>
-              ${state.qrScannerOpen
-                ? `
-                  <div class="sidebar-scanner">
-                    <div class="sidebar-scanner-preview">
-                      <video id="sidebar-qr-video" class="sidebar-scanner-video" autoplay muted playsinline></video>
-                    </div>
-                    <div class="sidebar-scanner-status ${e(state.qrScannerTone || "info")}">${e(state.qrScannerStatus || "Preparando camara...")}</div>
-                    <button class="secondary-btn sidebar-scanner-stop" data-action="toggle-qr-scanner">Cerrar escaner</button>
-                  </div>
-                `
-                : ""}
             </div>
 
             <button class="danger-btn logout-btn" data-action="logout">Cerrar sesion</button>
@@ -1066,28 +1114,28 @@
         </div>
         <button class="secondary-btn" data-action="refresh-admin">Recargar</button>
       </div>
-      <div class="grid pet-grid">
+      <div class="grid pet-grid admin-pets-table">
         ${state.adminPets.length
           ? state.adminPets.map((pet) => `
-            <article class="card">
+            <article class="card admin-pet-row">
               <div class="status ${pet.status}">
                 <span class="status-text"><i class="status-dot"></i>${pet.status === "lost" ? "Desaparecido" : "A salvo"}</span>
                 <span class="qr-tag">${e(pet.ownerName || "Sin propietario")}</span>
               </div>
-              <div class="card-body">
-                <div class="pet-head">
+              <div class="card-body admin-pet-row-body">
+                <div class="pet-head admin-pet-main">
                   ${pet.photo
                     ? `<img class="pet-photo" src="${pet.photo}" alt="${e(pet.name)}" />`
                     : `<div class="pet-photo is-empty" aria-label="Sin foto"></div>`}
-                  <div class="pet-copy">
+                  <div class="pet-copy admin-pet-copy">
                     <strong>${e(pet.name)}</strong>
+                    <span class="pet-id">ID: ${e(pet.id)}</span>
                     <div class="muted">${e(pet.type)} · ${e(pet.breed)}</div>
                     <div class="muted">${e(pet.ownerEmail || "Sin correo")}</div>
                     <div class="pet-district">📍 ${e(pet.district || "Sin distrito")}</div>
-                    <span class="pet-id">ID: ${e(pet.id)}</span>
                   </div>
                 </div>
-                <div class="actions">
+                <div class="actions admin-pet-actions">
                   <button class="secondary-btn" data-action="admin-toggle-pet-status" data-id="${pet.id}" data-status="${pet.status === "lost" ? "safe" : "lost"}">${pet.status === "lost" ? "Marcar a salvo" : "Reportar perdida"}</button>
                   <button class="action-btn" data-action="scan" data-id="${pet.id}">Abrir Vista Publica</button>
                   <button class="danger-btn" data-action="delete-pet" data-id="${pet.id}">Eliminar</button>
@@ -1331,6 +1379,25 @@
           <button class="secondary-btn qr-close" data-action="close-qr">Cerrar</button>
           <img src="${state.qrPreview.src}" alt="QR ampliado ${e(state.qrPreview.id)}" class="qr-modal-image" />
           <div class="qr-modal-id">QR ID: ${e(state.qrPreview.id)}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderQrScannerOverlay = () => {
+    if (!state.qrScannerOpen) return "";
+
+    return `
+      <div class="qr-scanner-layer" data-action="close-qr-scanner">
+        <div class="qr-scanner-shell" role="dialog" aria-modal="true" aria-label="Escaner QR" data-action="qr-scanner-modal">
+          <video id="qr-scanner-video" class="qr-scanner-video" autoplay muted playsinline></video>
+          <div class="qr-scanner-header">
+            <button class="secondary-btn qr-scanner-close" data-action="close-qr-scanner" aria-label="Cerrar escaner">Cerrar</button>
+          </div>
+          <div class="qr-scanner-frame" aria-hidden="true"></div>
+          <div class="qr-scanner-footer">
+            <div class="qr-scanner-status ${e(state.qrScannerTone || "info")}">${e(state.qrScannerStatus || "Preparando camara...")}</div>
+          </div>
         </div>
       </div>
     `;
@@ -1643,10 +1710,20 @@
       }
 
       state.qrScannerOpen = true;
+      state.sidebarOpen = false;
       state.qrScannerStatus = "Preparando camara...";
       state.qrScannerTone = "info";
       render();
       startQrScanner();
+      return;
+    }
+
+    if (action === "close-qr-scanner") {
+      closeQrScanner();
+      return;
+    }
+
+    if (action === "qr-scanner-modal") {
       return;
     }
 
@@ -2009,6 +2086,7 @@
         ${header}
         <div class="layout-frame"><main class="panel">${renderMain()}</main></div>
         ${renderQrModal()}
+        ${renderQrScannerOverlay()}
       </div>
     `;
 
@@ -2035,5 +2113,17 @@
       closeQrPreview();
     }
   });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      runAutoRefreshTick();
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    stopAutoRefresh();
+  });
+
+  startAutoRefresh();
   loadDashboard();
 })();

@@ -94,7 +94,7 @@ img {
 
 .login-card {
   width: min(100%, 420px);
-  padding: 24px 22px;
+  padding: 16px 18px;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(171, 194, 138, 0.32);
   border-radius: 20px;
@@ -140,17 +140,11 @@ img {
 }
 
 .public-scan-card .login-logo {
-  width: 118px;
-  margin: 8px 0 6px;
+  width: 100px;
+  margin: 4px 0 4px;
 }
 
-.public-scan-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 5px;
-  background: linear-gradient(90deg, #f1893f 0%, #dc4b41 100%);
-}
+
 
 .public-scan-lead {
   margin-bottom: 14px;
@@ -161,9 +155,9 @@ img {
 }
 
 .scan-state {
-  min-height: 44px;
-  margin: 0 0 12px;
-  padding: 11px 12px;
+  min-height: 36px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
   border-radius: 7px;
   border: 1px solid transparent;
   display: flex;
@@ -218,15 +212,15 @@ img {
 }
 
 .public-pet-body {
-  padding: 15px;
+  padding: 10px;
 }
 
 .public-pet-header-v2 {
   display: grid;
   justify-items: center;
   text-align: center;
-  gap: 8px;
-  padding-bottom: 12px;
+  gap: 4px;
+  padding-bottom: 8px;
   border-bottom: 1px solid #e2e7e1;
 }
 
@@ -235,8 +229,8 @@ img {
 }
 
 .public-pet-photo {
-  width: 156px;
-  height: 156px;
+  width: 110px;
+  height: 110px;
   border-radius: 10px;
   object-fit: cover;
   border: 2px solid #ecf1ea;
@@ -262,7 +256,7 @@ img {
 
 .public-pet-name {
   margin: 0;
-  font-size: 42px;
+  font-size: 30px;
   line-height: 1.02;
   font-weight: 900;
   color: #0f172a;
@@ -312,12 +306,12 @@ img {
 }
 
 .public-section-block {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .public-section-title {
-  margin: 0 0 6px;
-  padding-bottom: 8px;
+  margin: 0 0 4px;
+  padding-bottom: 5px;
   border-bottom: 1px solid #dde3dd;
   color: #7a8593;
   font-size: 11px;
@@ -333,7 +327,7 @@ img {
 }
 
 .public-info-row {
-  padding: 10px 0 11px;
+  padding: 6px 0 7px;
   border-bottom: 1px solid #e2e7e1;
 }
 
@@ -362,14 +356,14 @@ img {
 .public-info-value {
   margin: 0;
   color: #202b3d;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.28;
   overflow-wrap: anywhere;
 }
 
 .public-info-row.compact .public-info-value {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -406,8 +400,8 @@ img {
 }
 
 .public-owner-box {
-  margin-top: 14px;
-  padding: 10px 12px 12px;
+  margin-top: 8px;
+  padding: 8px 10px 10px;
   border-radius: 9px;
   background: #f5f8f5;
   border: 1px solid #dbe2da;
@@ -428,8 +422,8 @@ img {
 }
 
 .public-owner-name {
-  margin: 3px 0 0;
-  font-size: 18px;
+  margin: 2px 0 0;
+  font-size: 15px;
   font-weight: 900;
   color: #0f172a;
 }
@@ -474,18 +468,19 @@ img {
 }
 
 .scan-share-btn {
-  margin-top: 14px;
-  min-height: 50px;
+  margin-top: 8px;
+  min-height: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 0;
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 14px;
   font-size: 16px;
   font-weight: 900;
   letter-spacing: 0.02em;
+  text-transform: uppercase;
   color: #ffffff;
   background:
     linear-gradient(180deg, rgba(120, 166, 90, 0.98) 0%, rgba(79, 118, 57, 0.98) 100%);
@@ -495,10 +490,12 @@ img {
   transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
 }
 
+.public-pet-body > .scan-share-btn {
+  margin: 8px 0 8px;
+}
+
 .scan-share-btn::before {
-  content: "\1F4CD";
-  font-size: 15px;
-  line-height: 1;
+  content: none;
 }
 
 .scan-share-btn:hover:not(:disabled) {
@@ -598,32 +595,32 @@ img {
   }
 
   .public-pet-body {
-    padding: 14px;
+    padding: 10px;
   }
 
   .public-pet-header-v2 {
-    gap: 7px;
+    gap: 4px;
   }
 
   .public-pet-photo {
-    width: 146px;
-    height: 146px;
+    width: 100px;
+    height: 100px;
   }
 
   .public-pet-name {
-    font-size: 36px;
+    font-size: 26px;
   }
 
   .public-info-row {
-    padding: 9px 0 10px;
+    padding: 6px 0 7px;
   }
 
   .public-info-value {
-    font-size: 16px;
+    font-size: 14px;
   }
 
   .public-owner-name {
-    font-size: 17px;
+    font-size: 15px;
   }
 
   .public-owner-row {
